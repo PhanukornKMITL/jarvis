@@ -51,23 +51,57 @@ Stop the fake ESP with Ctrl+C. It disappears from the connected-device list.
 
 ## Try local voice (macOS)
 
-Local voice recognition is an optional step. It uses whisper.cpp on the Mac for
-Thai transcription and the Mac's local `say` voice for spoken replies; it does
-not send microphone audio to Apple or another cloud service. The model downloads
-once during setup and stays in the ignored `.models/` folder.
+Everything runs on the Mac: whisper.cpp for Thai speech-to-text, Qwen through
+`llama-server` for understanding and chat, and the local `say` voice (Kanya) for
+replies. Microphone audio never leaves the machine. Only the weather skill uses
+the internet (it sends the configured coordinates to api.open-meteo.com).
+Models download once into the ignored `.models/` folder.
 
 ```sh
-./setup_local_voice.sh
+./setup_local_voice.sh    # whisper.cpp + ggml-base.bin (wake word)
+```
+
+Command model: Thonburian Whisper medium, BiodatLab's Thai fine-tune. It heard
+real headset commands far better than `ggml-small.bin` and takes about 1s per
+command on an M4. Convert it from the official weights once (needs torch and
+transformers in any Python 3.11+ environment):
+
+```sh
+# download https://huggingface.co/biodatlab/whisper-th-medium-combined into .models/thonburian-medium-hf
+# plus whisper.cpp's models/convert-h5-to-ggml.py and a checkout of openai/whisper
+python convert-h5-to-ggml.py .models/thonburian-medium-hf path/to/openai-whisper /tmp/thon
+whisper-quantize /tmp/thon/ggml-model.bin .models/ggml-thonburian-medium-q5_0.bin q5_0
+```
+
+Local LLM (Qwen2-7B-Instruct, ~4.7 GB) for intents and free-form questions:
+
+```sh
+curl -L -o .models/qwen2-7b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2-7B-Instruct-GGUF/resolve/main/qwen2-7b-instruct-q4_k_m.gguf
+llama-server -m .models/qwen2-7b-instruct-q4_k_m.gguf --port 8080 -c 4096 -ngl 99
+```
+
+Then, each in its own Terminal tab: `python3 -m jarvis.server`,
+`python3 -m jarvis.fake_esp`, `python3 -m jarvis.fake_esp --kind garden`, and
+
+```sh
 python3 -m jarvis.cli voice
 ```
 
-Keep the JARVIS server and fake ESP running in their own Terminal tabs. Say
-“Jarvis”, wait for “พร้อมฟังค่ะ”, then ask for device status. macOS may ask
-Terminal for microphone permission the first time. Press Ctrl+C to stop listening.
+Speak in one breath ("จาวิส ปิดไฟที", "เฮ้ จาวิส วันนี้ฝนจะตกไหม",
+"จาวิส ต้นไม้เป็นไงบ้าง"), or say "จาวิส", wait for "พร้อมฟังค่ะ", then speak.
+Anything else goes to Qwen as a question. macOS may ask Terminal for microphone
+permission the first time. Press Ctrl+C to stop listening.
 
-The setup downloads the 142 MiB multilingual base model once. Recognition speed
-and accuracy depend on the microphone and Mac model. This first voice step
-answers device-status questions only.
+- `config.toml` picks the models, LLM endpoint, voice, weather coordinates and
+  dataset folder, so a hardware upgrade is usually a config change.
+- Light on/off is decided by rules, never by an LLM guess; when the transcript is
+  ambiguous JARVIS asks again instead of switching the wrong way.
+- Each skill lives in `jarvis/skills/`; add a module with `SKILLS` and list it in
+  `jarvis/skills/__init__.py`, and its description reaches the Qwen prompt automatically.
+- Every voice command's audio, transcripts and outcome are saved locally under
+  `work/dataset/` for measuring and training later (`[dataset] enabled = false`
+  turns this off).
 
 ## Try local voice on Windows
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import platform
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -57,19 +59,19 @@ def main() -> None:
         action_parser = subparsers.add_parser(command)
         action_parser.add_argument("--device", default="desk_light")
     voice_parser = subparsers.add_parser("voice", help="listen locally for the Jarvis wake word")
-    voice_parser.add_argument(
-        "--model",
-        default=str(Path(__file__).resolve().parent.parent / ".models" / "ggml-base.bin"),
-        help="path to a local Whisper model",
-    )
-    voice_parser.add_argument("--audio-device", default=":0" if __import__("platform").system() != "Windows" else "Microphone",
+    voice_parser.add_argument("--model", help="wake-word Whisper model (overrides config.toml)")
+    voice_parser.add_argument("--audio-device", default=":0" if platform.system() != "Windows" else "Microphone",
                              help="macOS: AVFoundation device index; Windows: DirectShow microphone name")
     try:
         args = parser.parse_args()
         if args.command == "voice":
+            from .config import load_config
             from .voice import listen
 
-            raise SystemExit(listen(args.host, args.port, args.model, args.audio_device))
+            config = load_config()
+            if args.model:
+                config = replace(config, wake_model=Path(args.model).resolve())
+            raise SystemExit(listen(args.host, args.port, args.audio_device, config))
         raise SystemExit(asyncio.run(run(args)))
     except (ConnectionRefusedError, asyncio.TimeoutError):
         parser.exit(1, "JARVIS server is not responding. Start it with: python -m jarvis.server\n")

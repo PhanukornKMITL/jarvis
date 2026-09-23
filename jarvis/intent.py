@@ -1,65 +1,67 @@
-"""Turn a transcript into a small, safe JARVIS intent via llama.cpp."""
+"""Turn a transcript into a skill intent: skill rules first, then the local LLM."""
 
 from __future__ import annotations
 
 import json
-import urllib.request
+
+from .llm import complete
+from .skills import BY_INTENT, SKILLS
+
+UNCLEAR = "unclear"
+FALLBACK = "chat"
+
+# How whisper actually misspells words over the Bluetooth headset mic.
+STT_NOISE_HINTS = """\
+- "ไฟ" อาจมาเป็น ฟาย ฟัย ภัย fy ไฟน์
+- "ปิด" อาจมาเป็น บิด บิต bit พิ
+- "เปิด" อาจมาเป็น เป็น เบิด เปิ้ด
+- "ให้หน่อย" อาจมาเป็น ให้น้อย ห้าหน่อย หน้อย
+- "ต้นไม้" อาจมาเป็น ตนไม้ ตุนไม้ ตนมา
+- "ฝน" อาจมาเป็น ฟน"""
 
 
-def classify(transcript: str, endpoint: str = "http://127.0.0.1:8080") -> dict:
-    prompt = (
-        "You classify Thai smart-home commands. Return JSON only, no markdown. "
-        "Allowed intents: status, light_on, light_off, unknown. "
-        f"Transcript: {transcript}\nJSON:"
+def _system_prompt() -> str:
+    intents = "\n".join(f"- {skill.intent}: {skill.description}" for skill in SKILLS)
+    names = ", ".join([*BY_INTENT, UNCLEAR])
+    # Naming the question skills explicitly matters: "pick the nearest intent" alone sent
+    # garbled "วันนี้ ฟนจะตกหมาย" to chat instead of weather.
+    questions = " ".join(s.intent for s in SKILLS if not s.rule_only and s.intent != FALLBACK)
+    return f"""คุณคือตัวแยกคำสั่งของ JARVIS ผู้ช่วยในบ้าน ตอบเป็น JSON บรรทัดเดียวเท่านั้น รูปแบบ {{"intent": "..."}}
+ข้อความที่ได้มาจากการแปลงเสียงพูดภาษาไทยเป็นตัวอักษรผ่านไมค์บลูทูธคุณภาพต่ำ จึงมักสะกดเพี้ยนตามเสียง ให้เดาจากเสียงอ่าน:
+{STT_NOISE_HINTS}
+intent ที่ใช้ได้:
+{intents}
+- {UNCLEAR}: ใช้เฉพาะเมื่อฟังดูเหมือนสั่งเปิดหรือปิดอุปกรณ์ แต่แยกไม่ออกว่าเปิดหรือปิด
+ถ้าเป็นคำถามที่เพี้ยน ให้เลือก {questions} ที่ใกล้เคียงที่สุด ถ้าไม่ใกล้อะไรเลยให้ตอบ {FALLBACK}
+ต้องเป็นหนึ่งใน: {names}"""
+
+
+def classify(transcript: str, endpoint: str, alternatives: tuple[str, ...] = ()) -> str:
+    """`alternatives` are other transcripts of the same audio; their rules must agree."""
+    texts = (transcript, *alternatives)
+    fired = {skill.intent for skill in SKILLS if skill.rule and any(skill.rule(text) for text in texts)}
+    if len(fired) > 1:
+        return UNCLEAR
+    if fired:
+        return fired.pop()
+    content = complete(
+        [{"role": "system", "content": _system_prompt()}, {"role": "user", "content": transcript}],
+        endpoint, temperature=0, max_tokens=24, timeout=30,
     )
-    body = json.dumps({
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0,
-        "max_tokens": 32,
-    }).encode()
-    request = urllib.request.Request(
-        endpoint.rstrip("/") + "/v1/chat/completions",
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        result = json.loads(response.read())
-    content = result["choices"][0]["message"]["content"]
     start, end = content.find("{"), content.rfind("}")
-    if start < 0 or end < start:
-        return {"intent": "unknown"}
-    parsed = json.loads(content[start : end + 1])
-    if parsed.get("intent") not in {"status", "light_on", "light_off", "unknown"}:
-        return {"intent": "unknown"}
-    return parsed
-
-
-def chat(transcript: str, endpoint: str = "http://127.0.0.1:8080") -> str:
-    """Free-form fallback for anything that isn't a device command: same
-    local Qwen model as classify(), no JSON constraint, so it can actually
-    answer questions or give advice instead of a canned "unknown" reply."""
-    body = json.dumps({
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "คุณคือ JARVIS ผู้ช่วยเสียงพูดภาษาไทย ตอบสั้น กระชับ เป็นกันเอง "
-                    "ไม่เกิน 2-3 ประโยค เพราะคำตอบจะถูกพูดออกลำโพง "
-                    "ข้อความที่ได้รับมาจากการแปลงเสียงพูดเป็นตัวอักษรด้วยโปรแกรมที่ไม่แม่นยำ "
-                    "อาจมีคำผิดหรือฟังไม่ครบ ถ้าข้อความดูไม่สมเหตุสมผลหรือไม่แน่ใจว่าหมายถึงอะไร "
-                    "ให้ถามกลับสั้นๆ เพื่อความชัดเจน อย่าเดาหรือแต่งเรื่องขึ้นมาตอบ"
-                ),
-            },
-            {"role": "user", "content": transcript},
-        ],
-        "temperature": 0.7,
-        "max_tokens": 120,
-    }).encode()
-    request = urllib.request.Request(
-        endpoint.rstrip("/") + "/v1/chat/completions",
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        result = json.loads(response.read())
-    return result["choices"][0]["message"]["content"].strip()
+    try:
+        intent = json.loads(content[start : end + 1]).get("intent") if 0 <= start < end else None
+    except json.JSONDecodeError:
+        intent = None
+    if intent == UNCLEAR:
+        return UNCLEAR
+    skill = BY_INTENT.get(intent or "")
+    if skill is None:
+        intent = FALLBACK
+    elif skill.rule_only:
+        # No rule matched, so the LLM choosing an action like switching a light is a guess.
+        return UNCLEAR
+    if intent == FALLBACK and any(s.mentions and s.mentions(transcript) for s in SKILLS):
+        # A garbled command ("บริฟัยให้น้อย") would otherwise get a rambling chat reply.
+        return UNCLEAR
+    return intent

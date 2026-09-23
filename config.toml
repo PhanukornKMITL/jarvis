@@ -1,0 +1,29 @@
+# JARVIS voice settings. Paths are relative to this file. Upgrading hardware usually
+# means changing only the model files here.
+
+[stt]
+# Fast model that listens for the wake word all the time.
+wake_model = ".models/ggml-base.bin"
+# More accurate model for the command after the wake word (falls back to wake_model if missing).
+# Thonburian Whisper medium (Thai fine-tune by BiodatLab), converted from
+# biodatlab/whisper-th-medium-combined; ~0.95s per command on an M4. See README.
+command_model = ".models/ggml-thonburian-medium-q5_0.bin"
+
+[llm]
+# OpenAI-compatible chat endpoint (llama-server running Qwen).
+endpoint = "http://127.0.0.1:8080"
+
+[tts]
+# macOS `say` voice.
+voice = "Kanya"
+
+[weather]
+# Bangkok. The weather skill sends only these coordinates to api.open-meteo.com.
+lat = 13.7563
+lon = 100.5018
+
+[dataset]
+# Keeps each voice command's audio and transcripts locally, for measuring and
+# training models later. Nothing leaves this machine.
+enabled = true
+dir = "work/dataset"

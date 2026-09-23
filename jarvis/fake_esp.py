@@ -11,14 +11,20 @@ def encode(message: dict) -> bytes:
     return (json.dumps(message, separators=(",", ":")) + "\n").encode()
 
 
-async def run(host: str, port: int, device_id: str) -> None:
+KINDS = {
+    "light": ("Desk light (fake ESP)", {"power": "off"}),
+    "garden": ("Garden sensor (fake ESP)", {"soil_moisture": 28, "temperature": 31.5, "humidity": 68}),
+}
+
+
+async def run(host: str, port: int, device_id: str, kind: str = "light") -> None:
     reader, writer = await asyncio.open_connection(host, port)
-    state = {"power": "off"}
+    name, state = KINDS[kind]
     writer.write(encode({
         "type": "register",
         "device_id": device_id,
-        "name": "Desk light (fake ESP)",
-        "device_type": "light",
+        "name": name,
+        "device_type": kind,
         "state": state,
     }))
     await writer.drain()
@@ -48,10 +54,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run one simulated ESP32 device")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--id", default="desk_light")
+    parser.add_argument("--kind", choices=sorted(KINDS), default="light")
+    parser.add_argument("--id", help="device id (default: desk_light for light, garden for garden)")
     args = parser.parse_args()
+    device_id = args.id or ("desk_light" if args.kind == "light" else "garden")
     try:
-        asyncio.run(run(args.host, args.port, args.id))
+        asyncio.run(run(args.host, args.port, device_id, args.kind))
     except (KeyboardInterrupt, ConnectionRefusedError):
         print("Could not connect to JARVIS. Is the server running?")
 
