@@ -62,7 +62,8 @@ def main() -> None:
         default=str(Path(__file__).resolve().parent.parent / ".models" / "ggml-base.bin"),
         help="path to a local Whisper model",
     )
-    voice_parser.add_argument("--audio-device", default=":0", help="FFmpeg AVFoundation audio device")
+    voice_parser.add_argument("--audio-device", default=":0" if __import__("platform").system() != "Windows" else "Microphone",
+                             help="macOS: AVFoundation device index; Windows: DirectShow microphone name")
     try:
         args = parser.parse_args()
         if args.command == "voice":
