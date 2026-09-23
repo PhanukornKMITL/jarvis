@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from pathlib import Path
 
 
 async def request(host: str, port: int, message: dict) -> dict:
@@ -55,8 +56,20 @@ def main() -> None:
     for command in ("light-on", "light-off"):
         action_parser = subparsers.add_parser(command)
         action_parser.add_argument("--device", default="desk_light")
+    voice_parser = subparsers.add_parser("voice", help="listen locally for the Jarvis wake word")
+    voice_parser.add_argument(
+        "--model",
+        default=str(Path(__file__).resolve().parent.parent / ".models" / "ggml-base.bin"),
+        help="path to a local Whisper model",
+    )
+    voice_parser.add_argument("--audio-device", default=":0", help="FFmpeg AVFoundation audio device")
     try:
-        raise SystemExit(asyncio.run(run(parser.parse_args())))
+        args = parser.parse_args()
+        if args.command == "voice":
+            from .voice import listen
+
+            raise SystemExit(listen(args.host, args.port, args.model, args.audio_device))
+        raise SystemExit(asyncio.run(run(args)))
     except (ConnectionRefusedError, asyncio.TimeoutError):
         parser.exit(1, "JARVIS server is not responding. Start it with: python -m jarvis.server\n")
 

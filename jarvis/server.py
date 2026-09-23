@@ -105,13 +105,12 @@ class JarvisServer:
                         future.set_result({"ok": False, "error": str(message.get("error", "action failed"))})
 
     def status(self) -> list[dict[str, Any]]:
-        now = time.monotonic()
         return [
             {
                 "device_id": d.device_id,
                 "name": d.name,
                 "device_type": d.device_type,
-                "online": now - d.last_seen < 10,
+                "online": True,
                 "state": d.state,
             }
             for d in sorted(self.devices.values(), key=lambda d: d.device_id)
