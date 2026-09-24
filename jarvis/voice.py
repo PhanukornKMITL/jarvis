@@ -6,6 +6,7 @@ import asyncio
 import platform
 import shutil
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -13,10 +14,17 @@ from .audio import BYTES_PER_SECOND, SPEECH_RMS, Microphone, rms_level
 from .config import Config
 from .dataset import Dataset
 from .intent import UNCLEAR, classify
+from .persona import apply_persona
 from .skills import BY_INTENT, Context
+from .skills.light import OFF_REPLY, ON_REPLY
 from .stt import WhisperSTT, clean_transcript
-from .tts import speak
+from .tts import speak, synthesize_f5
 from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, split_wake
+
+READY_REPLY = "พร้อมฟังค่ะ"
+UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอีกทีนะคะ"
+NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ"
+WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY)
 
 # Short polls while waiting for the wake word so "Jarvis" is noticed quickly.
 WAKE_STEP_SECONDS = 2
@@ -25,11 +33,6 @@ LISTEN_TIMEOUT_SECONDS = 6
 # People pause after the name ("จาร์วิส … ปิดไฟ"); real recordings showed up to 1.25s.
 AFTER_WAKE_GRACE_SECONDS = 1.5
 LOG_PATH = Path(__file__).resolve().parent.parent / "work" / "voice_transcript.log"
-
-
-def personalize_reply(text: str, name: str) -> str:
-    name = name.strip()
-    return text if not name or name in text else f"{name}คะ {text}"
 
 
 def log_voice(message: str) -> None:
@@ -47,7 +50,7 @@ def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple
     except (OSError, ValueError, KeyError):
         return "error", "ติดต่อ Qwen ไม่ได้ค่ะ"
     if intent == UNCLEAR:
-        return intent, "ฟังไม่ชัดค่ะ ลองพูดอีกทีนะคะ"
+        return intent, UNCLEAR_REPLY
     try:
         return intent, BY_INTENT[intent].handle(ctx, text)
     except (ConnectionRefusedError, asyncio.TimeoutError, OSError, ValueError, KeyError):
@@ -73,9 +76,23 @@ class VoiceSession:
         self.wake_stt = wake_stt
         self.command_stt = command_stt
         self.dataset = Dataset(config.dataset_dir)
+        self.f5_port = config.f5_port if config.tts_engine == "f5" else None
+
+    def render(self, text: str) -> str:
+        return apply_persona(text, self.config.gender, self.config.profile.name)
 
     def say(self, text: str) -> None:
-        self.mic.drain(speak(personalize_reply(text, self.config.profile.name), self.config.tts_voice))
+        self.mic.drain(speak(self.render(text), self.config.tts_voice, self.f5_port))
+
+    def warm_up(self) -> None:
+        """Pre-generates the fixed replies so they play instantly instead of after synthesis."""
+        if not self.f5_port:
+            return
+        for text in WARM_PHRASES:
+            try:
+                synthesize_f5(self.render(text), self.f5_port, timeout=120)
+            except OSError:
+                return
 
     def run(self) -> None:
         overlap = b""
@@ -120,7 +137,7 @@ class VoiceSession:
         if not command_text:
             follow, heard = self.mic.capture(b"", AFTER_WAKE_GRACE_SECONDS)
             if not heard:
-                self.say("พร้อมฟังค่ะ")
+                self.say(READY_REPLY)
                 follow, heard = self.mic.capture(b"", LISTEN_TIMEOUT_SECONDS)
             if heard:
                 utterance += follow
@@ -129,13 +146,13 @@ class VoiceSession:
                 command_text = clean_transcript(follow_text if after_wake is None else after_wake)
         if not command_text:
             self.dataset.save(utterance, wake=wake_heard, transcript=full_text, command="", intent=None)
-            self.say("ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ")
+            self.say(NOT_HEARD_REPLY)
             return
         log_voice(f"คำสั่ง: {command_text}" + (f" (base: {alternatives[0]})" if alternatives else ""))
         intent, reply = answer(self.ctx, command_text, alternatives)
         log_voice(f"intent: {intent}")
         self.dataset.save(utterance, wake=wake_heard, transcript=full_text, command=command_text,
-                          base=base_text, intent=intent, reply=reply)
+                          base=base_text, intent=intent, reply=self.render(reply))
         self.say(reply)
 
 
@@ -160,6 +177,7 @@ def listen(host: str, port: int, audio_device: str, config: Config) -> int:
     else:
         print("ครั้งแรก macOS อาจขออนุญาตให้ Terminal ใช้ไมโครโฟน", flush=True)
     session = VoiceSession(config, Context(host, port, config), mic, WhisperWake(wake_stt), wake_stt, command_stt)
+    threading.Thread(target=session.warm_up, daemon=True).start()
     try:
         session.run()
     except KeyboardInterrupt:

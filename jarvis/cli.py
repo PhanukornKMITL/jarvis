@@ -60,8 +60,9 @@ def main() -> None:
         action_parser.add_argument("--device", default="desk_light")
     voice_parser = subparsers.add_parser("voice", help="listen locally for the Jarvis wake word")
     voice_parser.add_argument("--model", help="wake-word Whisper model (overrides config.toml)")
-    voice_parser.add_argument("--audio-device", default=":0" if platform.system() != "Windows" else "Microphone",
-                             help="macOS: AVFoundation device index; Windows: DirectShow microphone name")
+    # ":default" follows the macOS input setting; ":0" broke when BlackHole took index 0.
+    voice_parser.add_argument("--audio-device", default=":default" if platform.system() != "Windows" else "Microphone",
+                             help="macOS: AVFoundation device (':default', ':1' or ':<name>'); Windows: DirectShow microphone name")
     try:
         args = parser.parse_args()
         if args.command == "voice":

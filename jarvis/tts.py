@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import platform
 import re
 import shutil
@@ -9,14 +10,20 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 PIPER_MODEL = Path(__file__).resolve().parent.parent / ".models" / "piper" / "th_TH-tsync2-medium.onnx"
 
 
-def speak(text: str, voice: str = "Kanya") -> float:
-    """`voice` is the macOS `say` voice; Windows picks its own engines."""
+def speak(text: str, voice: str = "Kanya", f5_port: int | None = None) -> float:
+    """`voice` is the macOS `say` voice; with `f5_port` the F5-TTS server is tried first."""
     print(f"JARVIS: {text}", flush=True)
+    if f5_port:
+        played = _speak_f5(text, f5_port)
+        if played is not None:
+            return played
     if platform.system() == "Windows":
         return _speak_windows(text)
     say = shutil.which("say")
@@ -24,6 +31,71 @@ def speak(text: str, voice: str = "Kanya") -> float:
         return 0.0
     start = time.monotonic()
     subprocess.run([say, "-v", voice, text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    return time.monotonic() - start
+
+
+def split_sentences(text: str, min_chars: int = 20) -> list[str]:
+    """Thai has no full stops, so split after ครับ/ค่ะ/นะคะ and punctuation; merge tiny pieces."""
+    pieces = [p for p in re.split(r"(?<=[.!?])\s+|(?<=ครับ)\s+|(?<=ค่ะ)\s+|(?<=คะ)\s+", text.strip()) if p]
+    merged: list[str] = []
+    for piece in pieces:
+        if merged and len(merged[-1]) < min_chars:
+            merged[-1] = f"{merged[-1]} {piece}"
+        else:
+            merged.append(piece)
+    return merged
+
+
+def synthesize_f5(text: str, port: int, timeout: float = 60) -> bytes:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/synthesize",
+        data=json.dumps({"text": text}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def _player() -> list[str] | None:
+    if shutil.which("afplay"):
+        return ["afplay"]
+    ffplay = shutil.which("ffplay")
+    return [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet"] if ffplay else None
+
+
+def _speak_f5(text: str, port: int) -> float | None:
+    """Plays each sentence while the next one is generated; None if the server is unreachable."""
+    player = _player()
+    sentences = split_sentences(text)
+    if not player or not sentences:
+        return None
+    start = time.monotonic()
+    playing: subprocess.Popen | None = None
+    files: list[Path] = []
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(synthesize_f5, sentences[0], port)
+            for index in range(len(sentences)):
+                try:
+                    audio = pending.result()
+                except OSError:
+                    if index == 0:
+                        return None  # nothing played yet: let the caller fall back to `say`
+                    break
+                if index + 1 < len(sentences):
+                    pending = pool.submit(synthesize_f5, sentences[index + 1], port)
+                handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+                handle.write(audio)
+                handle.close()
+                files.append(Path(handle.name))
+                if playing:
+                    playing.wait()
+                playing = subprocess.Popen([*player, handle.name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if playing:
+                playing.wait()
+    finally:
+        for path in files:
+            path.unlink(missing_ok=True)
     return time.monotonic() - start
 
 

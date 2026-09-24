@@ -5,6 +5,8 @@ import re
 from .base import Context, Skill
 
 TARGET = "desk_light"
+ON_REPLY = "เปิดไฟให้แล้วค่ะ"
+OFF_REPLY = "ปิดไฟให้แล้วค่ะ"
 # Spellings whisper actually produced for these words over a Bluetooth headset mic.
 _LIGHT = r"(?:ไฟ|ฟาย|ฟัย|ภัย|fy|fai)"
 _ON = re.compile(rf"(?:เปิด|เปิ้ด|เบิด)\s*{_LIGHT}|open\s*{_LIGHT}", re.IGNORECASE)
@@ -27,7 +29,7 @@ SKILLS = (
     Skill(
         intent="light_on",
         description="สั่งเปิดไฟ",
-        handle=lambda ctx, _text: _switch(ctx, "turn_on", "เปิดไฟให้แล้วค่ะ"),
+        handle=lambda ctx, _text: _switch(ctx, "turn_on", ON_REPLY),
         rule=lambda text: bool(_ON.search(text)),
         rule_only=True,
         mentions=_mentions_light,
@@ -35,7 +37,7 @@ SKILLS = (
     Skill(
         intent="light_off",
         description="สั่งปิดไฟ",
-        handle=lambda ctx, _text: _switch(ctx, "turn_off", "ปิดไฟให้แล้วค่ะ"),
+        handle=lambda ctx, _text: _switch(ctx, "turn_off", OFF_REPLY),
         rule=lambda text: bool(_OFF.search(text)),
         rule_only=True,
         mentions=_mentions_light,

@@ -101,6 +101,29 @@ permission the first time. Press Ctrl+C to stop listening.
   `work/dataset/` for measuring and training later (`[dataset] enabled = false`
   turns this off).
 
+### Natural voice with F5-TTS (optional)
+
+`[tts] engine = "f5"` clones a voice from a 2–8 s reference clip with F5-TTS Thai
+(VIZINTZOR/F5-TTS-THAI, CC-BY-4.0). No per-voice training: the model conditions on
+the clip every time, so a shorter clip is faster (2.8 s ≈ 38% faster than 6.8 s).
+It runs as the `tts` service in its own venv because it needs torch; everything
+else stays stdlib-only. If it is not running, JARVIS falls back to `say`.
+
+```sh
+python3.13 -m venv .venv-tts
+.venv-tts/bin/pip install f5-tts-th soundfile torchcodec
+# .models/f5/reference.wav  - 2-8 s of clean speech (24 kHz mono)
+# .models/f5/reference.txt  - its exact transcript
+```
+
+The model (~1.3 GB) downloads into `.models/f5/` on first start. `[tts.f5] step`
+trades quality for speed (16 ≈ real time on an M4). Fixed replies are
+pre-generated at startup and cached in `work/tts_cache/`; long replies are spoken
+sentence by sentence while the next one is generated. Keep reference clips in the
+git-ignored `.models/`: a voice clip is someone's voice and must not be committed.
+
+`[persona] gender` sets ครับ/ค่ะ and ผม/ฉัน for every reply; match it to the voice.
+
 ## Try local voice on Windows
 
 Install FFmpeg and whisper.cpp so that `ffmpeg` and `whisper-cli` are available

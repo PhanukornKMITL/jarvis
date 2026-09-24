@@ -31,6 +31,11 @@ class Config:
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8766
     tts_voice: str = "Kanya"
+    tts_engine: str = "say"
+    f5_port: int = 8767
+    f5_ref_audio: Path = ROOT / ".models" / "f5" / "reference.wav"
+    f5_step: int = 16
+    gender: str = "female"
     weather_lat: float = 13.7563
     weather_lon: float = 100.5018
     dataset_dir: Path | None = ROOT / "work" / "dataset"
@@ -55,6 +60,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
     stt, llm, tts = data.get("stt", {}), data.get("llm", {}), data.get("tts", {})
     weather, dataset = data.get("weather", {}), data.get("dataset", {})
     run, dashboard = data.get("run", {}), data.get("dashboard", {})
+    f5, persona = tts.get("f5", {}), data.get("persona", {})
     default = Config()
     dataset_dir = ROOT / dataset["dir"] if "dir" in dataset else default.dataset_dir
     return Config(
@@ -68,6 +74,11 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
         dashboard_host=str(dashboard.get("host", default.dashboard_host)),
         dashboard_port=int(dashboard.get("port", default.dashboard_port)),
         tts_voice=tts.get("voice", default.tts_voice),
+        tts_engine=str(tts.get("engine", default.tts_engine)),
+        f5_port=int(f5.get("port", default.f5_port)),
+        f5_ref_audio=ROOT / f5["ref_audio"] if "ref_audio" in f5 else default.f5_ref_audio,
+        f5_step=int(f5.get("step", default.f5_step)),
+        gender=str(persona.get("gender", default.gender)),
         weather_lat=float(weather.get("lat", default.weather_lat)),
         weather_lon=float(weather.get("lon", default.weather_lon)),
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,

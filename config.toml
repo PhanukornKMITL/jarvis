@@ -23,8 +23,22 @@ host = "127.0.0.1"
 port = 8766
 
 [tts]
-# macOS `say` voice.
+# "f5" = natural voice cloned by F5-TTS Thai (the `tts` service, needs .venv-tts; see README),
+# falling back to "say" when it is unavailable. "say" = the macOS voice below only.
+engine = "f5"
 voice = "Kanya"
+
+[tts.f5]
+port = 8767
+# 2-8 s of clean speech. Its exact transcript goes in a .txt file with the same name.
+# Keep both in .models/ (git-ignored): a voice clip is someone's voice, never commit it.
+ref_audio = ".models/f5/reference.wav"
+# Quality vs speed: 16 ≈ 1x real time on an M4, 8 is faster but rougher, 32 is the model default.
+step = 16
+
+[persona]
+# "male" → replies end with ครับ, "female" → ค่ะ. Match the TTS voice.
+gender = "male"
 
 [weather]
 # Bangkok. The weather skill sends only these coordinates to api.open-meteo.com.

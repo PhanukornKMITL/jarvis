@@ -30,12 +30,16 @@ def port_open(port: int) -> bool:
         return False
 
 
-def llm_healthy(port: int) -> bool:
+def http_healthy(port: int) -> bool:
     try:
         with urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
             return b'"status":"ok"' in response.read().replace(b" ", b"")
     except OSError:
         return False
+
+
+llm_healthy = http_healthy
+TTS_PYTHON = ROOT / ".venv-tts" / "bin" / "python"
 
 
 def device_online(device_id: str) -> bool:
@@ -49,12 +53,21 @@ def device_online(device_id: str) -> bool:
 def voice_pids() -> list[int]:
     if platform.system() == "Windows":
         return []
+    # Only Python processes count: `pgrep -f` also matched shells whose command line merely
+    # mentioned the voice command, so voice was reported as already running and never started.
     try:
-        result = subprocess.run(["pgrep", "-f", "jarvis.cli voice"], capture_output=True,
-                                text=True, check=False)
-        return [int(line) for line in result.stdout.splitlines() if line.isdigit() and int(line) != os.getpid()]
+        result = subprocess.run(["ps", "-Ao", "pid=,comm=,args="], capture_output=True, text=True, check=False)
     except OSError:
         return []
+    pids = []
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3 or not parts[0].isdigit():
+            continue
+        pid, comm, args = int(parts[0]), Path(parts[1]).name.lower(), parts[2]
+        if pid != os.getpid() and comm.startswith("python") and "-m jarvis.cli voice" in args:
+            pids.append(pid)
+    return pids
 
 
 @dataclass
@@ -90,10 +103,12 @@ class Supervisor:
                                   ready_check=lambda: device_online("desk_light")),
             "fake_garden": Service("fake_garden", "สวนจำลอง", [py, "-m", "jarvis.fake_esp", "--kind", "garden"],
                                    ready_check=lambda: device_online("garden")),
+            "tts": Service("tts", "เสียงพูด F5-TTS", [str(TTS_PYTHON), "-m", "jarvis.tts_server"], config.f5_port,
+                           lambda: http_healthy(config.f5_port)),
             "voice": Service("voice", "คำสั่งเสียง", [py, "-m", "jarvis.cli", "voice"],
                              ready_check=lambda: self.services["voice"].ready_seen),
         }
-        self.order = ["server"] + [f"fake_{kind}" for kind in config.fake_devices if kind in {"light", "garden"}] + ["llm"]
+        self.order = ["server"] + [f"fake_{kind}" for kind in config.fake_devices if kind in {"light", "garden"}] + ["llm", "tts"]
         if config.autostart_voice:
             self.order.append("voice")
         self.closing = threading.Event()
@@ -104,6 +119,13 @@ class Supervisor:
                 return "ไม่พบ llama-server"
             if not self.config.llm_model.is_file():
                 return f"ไม่พบโมเดล {self.config.llm_model}"
+        if name == "tts":
+            if self.config.tts_engine != "f5":
+                return "ปิดอยู่ ([tts] engine ไม่ใช่ f5)"
+            if not TTS_PYTHON.is_file():
+                return "ไม่พบ .venv-tts (ดู README หัวข้อ F5-TTS)"
+            if not self.config.f5_ref_audio.is_file() or not self.config.f5_ref_audio.with_suffix(".txt").is_file():
+                return f"ไม่พบเสียงต้นแบบ {self.config.f5_ref_audio.name} หรือไฟล์ .txt ของมัน"
         if name == "voice":
             if not shutil.which("ffmpeg") or not shutil.which("whisper-cli"):
                 return "ไม่พบ ffmpeg หรือ whisper-cli"
@@ -193,7 +215,7 @@ class Supervisor:
             service.ready_seen = False
             service.status, service.reason, service.external_pid = "starting", None, None
             threading.Thread(target=self._read_log, args=(service, process), daemon=True).start()
-            threading.Thread(target=self._wait_ready, args=(service, process, 65 if name == "llm" else 12), daemon=True).start()
+            threading.Thread(target=self._wait_ready, args=(service, process, 65 if name in {"llm", "tts"} else 12), daemon=True).start()
             return self.snapshot(name)
 
     def stop(self, name: str) -> dict:
@@ -246,10 +268,11 @@ class Supervisor:
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline and self.services["server"].status == "starting" and not self.closing.is_set():
             time.sleep(0.3)
-        # LLM loading runs in parallel with fake device registration.
+        # LLM and TTS model loading run in parallel with fake device registration.
         self.start("llm")
+        self.start("tts")
         for name in self.order:
-            if name in {"server", "llm", "voice"}:
+            if name in {"server", "llm", "tts", "voice"}:
                 continue
             if self.closing.is_set():
                 return
@@ -257,7 +280,10 @@ class Supervisor:
         if self.config.autostart_voice:
             deadline = time.monotonic() + 70
             while time.monotonic() < deadline and not self.closing.is_set():
-                if self.services["llm"].status in {"running", "external"} and llm_healthy(urlsplit(self.config.llm_endpoint).port or 8080):
+                # Voice works without F5 (falls back to `say`), so only wait while it is still loading.
+                tts_loading = self.services["tts"].status == "starting"
+                if (self.services["llm"].status in {"running", "external"} and not tts_loading
+                        and llm_healthy(urlsplit(self.config.llm_endpoint).port or 8080)):
                     self.start("voice")
                     return
                 if self.services["llm"].status in {"crashed", "missing"}:
@@ -267,7 +293,7 @@ class Supervisor:
 
     def shutdown(self) -> None:
         self.closing.set()
-        for name in ("voice", "fake_garden", "fake_light", "server", "llm"):
+        for name in ("voice", "fake_garden", "fake_light", "server", "tts", "llm"):
             self.stop(name)
 
 
