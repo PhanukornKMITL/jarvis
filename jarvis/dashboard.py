@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .cli import request
 from .config import Config
+from .optimize import memory_status, optimize
 
 HTML = Path(__file__).with_name("dashboard.html")
 CSS = Path(__file__).with_name("dashboard.css")
@@ -98,7 +99,8 @@ def make_server(host: str, port: int, supervisor) -> ThreadingHTTPServer:
                     devices, devices_error = [], "ติดต่อ server ไม่ได้"
                 self._json(200, {"services": [supervisor.snapshot(name) for name in supervisor.services],
                                  "devices": devices, "devices_error": devices_error,
-                                 "recent": recent_commands(supervisor.config)})
+                                 "recent": recent_commands(supervisor.config), "memory": memory_status(),
+                                 "quit_apps": list(supervisor.config.quit_apps)})
             elif path.path == "/api/logs":
                 name = parse_qs(path.query).get("name", [""])[0]
                 if name not in supervisor.services:
@@ -130,6 +132,8 @@ def make_server(host: str, port: int, supervisor) -> ThreadingHTTPServer:
                     self._json(200 if result.get("ok") else 400, result)
                 except (OSError, ValueError, asyncio.TimeoutError):
                     self._error(503, "ติดต่อ server ไม่ได้")
+            elif path == "/api/optimize":
+                self._json(200, optimize(list(supervisor.config.quit_apps)))
             elif path == "/api/service":
                 name, op = body.get("name"), body.get("op")
                 if not isinstance(name, str) or name not in supervisor.services or op not in {"start", "stop", "restart"}:

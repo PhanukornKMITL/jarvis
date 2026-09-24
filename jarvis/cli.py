@@ -58,6 +58,8 @@ def main() -> None:
     for command in ("light-on", "light-off"):
         action_parser = subparsers.add_parser(command)
         action_parser.add_argument("--device", default="desk_light")
+    optimize_parser = subparsers.add_parser("optimize", help="quit apps listed in [optimize] quit_apps to free RAM")
+    optimize_parser.add_argument("--dry-run", action="store_true", help="only show what would be quit")
     voice_parser = subparsers.add_parser("voice", help="listen locally for the Jarvis wake word")
     voice_parser.add_argument("--model", help="wake-word Whisper model (overrides config.toml)")
     # ":default" follows the macOS input setting; ":0" broke when BlackHole took index 0.
@@ -65,6 +67,13 @@ def main() -> None:
                              help="macOS: AVFoundation device (':default', ':1' or ':<name>'); Windows: DirectShow microphone name")
     try:
         args = parser.parse_args()
+        if args.command == "optimize":
+            from .config import load_config
+            from .optimize import optimize
+
+            result = optimize(list(load_config().quit_apps), dry_run=args.dry_run)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            raise SystemExit(0 if result.get("ok") else 1)
         if args.command == "voice":
             from .config import load_config
             from .voice import listen

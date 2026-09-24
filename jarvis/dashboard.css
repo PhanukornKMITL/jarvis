@@ -121,3 +121,10 @@ progress { width: 100%; height: 9px; accent-color: #63dce8; }.warning { color: v
 @media (max-width: 900px) { .hero-side { display: none; }.overview-grid, .operations-grid { grid-template-columns: 1fr; }.hero { min-height: 570px; }.hud { width: min(86vw, 540px); } }
 @media (max-width: 600px) { .topbar-meta .topbar-network, .hero-footer span:last-child { display: none; }.topbar { padding: 14px 18px; }.hero { min-height: 390px; }.hud { width: min(96vw, 430px); }.hud h1 { font-size: clamp(19px, 6vw, 29px); letter-spacing: .16em; }.center-eyebrow { font-size: 7px; letter-spacing: .16em; }.voice-status { margin-top: 9px; font-size: 9px; }.hero-footer { bottom: 8px; }.panel { padding: 17px 16px; }.section-label { font-size: 8px; letter-spacing: .11em; }.app-footer span:last-child { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+.memory-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid rgba(111, 225, 243, .18); background: rgba(8, 34, 43, .45); }
+.memory-row small { display: block; margin-top: 3px; opacity: .65; }
+.memory-result { margin: -4px 0 12px; font-size: 12px; opacity: .85; }
+.pressure-normal { color: #7ef0b5; }
+.pressure-warning { color: #ffd479; }
+.pressure-critical { color: #ff8a8a; }

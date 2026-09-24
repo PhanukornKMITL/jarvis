@@ -71,3 +71,9 @@ lon = 100.5018
 # training models later. Nothing leaves this machine.
 enabled = true
 dir = "work/dataset"
+
+[optimize]
+# Optimization mode (dashboard button or `python3 -m jarvis.cli optimize`) asks these apps to
+# quit like Cmd+Q so the models get RAM back (they can still ask to save). Terminal, Claude
+# and Finder are never quit. Edit freely; app names as shown in the menu bar.
+quit_apps = ["ChatGPT", "Codex"]

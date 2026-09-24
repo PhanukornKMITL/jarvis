@@ -33,6 +33,12 @@ python3 -m jarvis.run
 ข้อมูลส่วนตัวสำหรับ JARVIS เก็บใน `profile.toml` ที่ root ของ repo ไฟล์นี้ถูก Git ignore
 และโหลดใหม่เมื่อเริ่ม voice ระบบใช้ข้อมูลนี้ตอบคำถามส่วนตัวและปรับคำแนะนำอาหาร
 
+### โหมดประหยัด RAM
+
+ปุ่ม "โหมดประหยัด RAM" บน dashboard (หรือ `python3 -m jarvis.cli optimize`, ใส่ `--dry-run`
+เพื่อดูก่อน) สั่งปิดแอปใน `[optimize] quit_apps` แบบเดียวกับ Cmd+Q แอปที่มีงานค้างจะถามให้เซฟ
+และไม่ปิด Terminal, Claude หรือ Finder เด็ดขาด dashboard แสดงระดับ RAM และ swap ให้ดูก่อน/หลัง
+
 ## รันแยกทีละตัว (ดีบัก)
 
 ```sh

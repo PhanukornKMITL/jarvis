@@ -46,6 +46,7 @@ class Config:
     weather_lat: float = 13.7563
     weather_lon: float = 100.5018
     dataset_dir: Path | None = ROOT / "work" / "dataset"
+    quit_apps: tuple[str, ...] = ("ChatGPT", "Codex")
 
 
 def load_profile(path: Path = PROFILE_PATH) -> Profile:
@@ -68,6 +69,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
     weather, dataset = data.get("weather", {}), data.get("dataset", {})
     run, dashboard = data.get("run", {}), data.get("dashboard", {})
     f5, persona, voice = tts.get("f5", {}), data.get("persona", {}), data.get("voice", {})
+    optimize = data.get("optimize", {})
     default = Config()
     dataset_dir = ROOT / dataset["dir"] if "dir" in dataset else default.dataset_dir
     return Config(
@@ -96,4 +98,5 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
         weather_lat=float(weather.get("lat", default.weather_lat)),
         weather_lon=float(weather.get("lon", default.weather_lon)),
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,
+        quit_apps=tuple(optimize.get("quit_apps", default.quit_apps)),
     )
