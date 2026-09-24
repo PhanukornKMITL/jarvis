@@ -68,6 +68,7 @@ MAX_FOLLOW_UPS = 5
 HISTORY_TURNS = 6
 # Share of a heard command found in JARVIS's last reply above which it is its own echo.
 ECHO_OVERLAP = 0.6
+ECHO_MIN_CHARS = 5
 HISTORY_EXPIRES_SECONDS = 180
 LOG_PATH = Path(__file__).resolve().parent.parent / "work" / "voice_transcript.log"
 
@@ -119,10 +120,13 @@ def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple
 def is_echo(heard: str, said: str) -> bool:
     """True when most of what was heard is JARVIS's own last reply coming back through the mic."""
     heard, said = normalize(heard), normalize(said)
-    if not heard or not said:
+    # Short replies ("โอเค") share scattered letters with almost any sentence: never echo.
+    if len(heard) < ECHO_MIN_CHARS or not said:
         return False
-    matched = sum(block.size for block in SequenceMatcher(None, heard, said).get_matching_blocks())
-    return matched / len(heard) >= ECHO_OVERLAP
+    # One contiguous stretch, not scattered letters: summing all matching blocks flagged
+    # the owner's "โอเค" as echo of a garden reply that merely contained อ, เ and ค.
+    longest = SequenceMatcher(None, heard, said, autojunk=False).find_longest_match(0, len(heard), 0, len(said))
+    return longest.size / len(heard) >= ECHO_OVERLAP
 
 
 def speaker_score(pcm: bytes, port: int) -> float | None:
