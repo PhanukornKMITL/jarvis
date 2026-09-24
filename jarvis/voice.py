@@ -192,8 +192,10 @@ class VoiceSession:
         if score is None or score >= threshold:
             return True
         log_voice(f"ไม่ใช่เสียงเจ้าของ ไม่รับ{what} (score={score:.2f} < {threshold:.2f})")
-        # Kept (marked) so thresholds can be tuned from real rejections later.
-        self.dataset.save(pcm, rejected=what, speaker_score=score, intent=None)
+        # Kept (marked) so thresholds can be tuned from real rejections later. Not for
+        # barge-in: those are almost all JARVIS's own voice leaking into the mic.
+        if what != "การพูดแทรก":
+            self.dataset.save(pcm, rejected=what, speaker_score=score, intent=None)
         return False
 
     def _clearly_owner(self) -> bool:

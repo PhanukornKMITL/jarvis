@@ -54,7 +54,9 @@ def classify(transcript: str, endpoint: str, alternatives: tuple[str, ...] = ())
     except json.JSONDecodeError:
         intent = None
     if intent == UNCLEAR:
-        return UNCLEAR
+        # "unclear" is only for an on/off command that can't be told apart; Qwen also used it
+        # for ordinary chat ("ขอคิดแบบนี้"), which then got "ฟังไม่ชัด" instead of an answer.
+        return UNCLEAR if any(s.mentions and s.mentions(transcript) for s in SKILLS) else FALLBACK
     skill = BY_INTENT.get(intent or "")
     if skill is None:
         intent = FALLBACK
