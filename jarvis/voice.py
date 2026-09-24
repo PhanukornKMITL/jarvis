@@ -196,6 +196,13 @@ class VoiceSession:
         self.dataset.save(pcm, rejected=what, speaker_score=score, intent=None)
         return False
 
+    def _clearly_owner(self) -> bool:
+        """The last speaker check passed the strict threshold. Text overlap alone can't tell
+        echo from a user repeating JARVIS's words ("อาหารประเภทไหน" in an answer to
+        "คุณชอบอาหารประเภทไหนครับ"), so the voice decides and text only breaks the tie."""
+        score = self.last_score
+        return score is not None and score >= self.config.speaker_threshold
+
     def capture(self, initial: bytes, wait_seconds: float) -> tuple[bytes, bool]:
         """Microphone.capture, starting with speech the barge-in watcher already heard."""
         carry, self._carry = self._carry, b""
@@ -383,7 +390,7 @@ class VoiceSession:
                 interruption = self.hear(pcm, need_wake=False) if self.is_owner(pcm, "การพูดแทรก") else None
                 if interruption is None or not interruption.command:
                     continue  # nothing usable was said: resume the answer
-                if is_echo(interruption.command, " ".join(self._spoken)):
+                if is_echo(interruption.command, " ".join(self._spoken)) and not self._clearly_owner():
                     log_voice(f"พูดแทรกเป็นเสียงตัวเอง พูดต่อ: {interruption.command}")
                     continue
                 if _STOP_WORDS.fullmatch(normalize(interruption.command)):
@@ -405,7 +412,7 @@ class VoiceSession:
             if next_heard is None or not next_heard.command:
                 return
             last_said = self.ctx.history[-1][1] if self.ctx.history else ""
-            if is_echo(next_heard.command, last_said):
+            if is_echo(next_heard.command, last_said) and not self._clearly_owner():
                 # JARVIS heard itself ("ต้นไม้ความชืด" right after its garden reply): answering it loops.
                 log_voice(f"ได้ยินเสียงตัวเอง ไม่ตอบ: {next_heard.command}")
                 return
