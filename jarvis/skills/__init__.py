@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from . import chat, garden, light, status, weather
+from . import chat, clock, garden, light, status, weather
 from .base import Context, Skill
 
-MODULES = (light, status, weather, garden, chat)
+MODULES = (light, status, weather, garden, clock, chat)
 SKILLS: tuple[Skill, ...] = tuple(skill for module in MODULES for skill in module.SKILLS)
 BY_INTENT = {skill.intent: skill for skill in SKILLS}
 
