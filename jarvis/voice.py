@@ -286,8 +286,10 @@ class VoiceSession:
                     loud = gap = 0
             if loud >= BARGE_CHUNKS:
                 audio = b"".join(recent)
-                # Strict threshold here: JARVIS's own echo scored up to 0.28, above the follow-up one.
-                if not self.is_owner(audio, "การพูดแทรก"):
+                # Follow-up threshold: the owner's ~1 s interruption, mixed with JARVIS, scored
+                # 0.26-0.28. Echo is already subtracted before this point, and text that repeats
+                # JARVIS's words is still dropped unless the score clears speaker_threshold.
+                if not self.is_owner(audio, "การพูดแทรก", in_conversation=True):
                     recent.clear()
                     loud = gap = 0  # e.g. JARVIS's own voice leaking into the mic: keep talking
                     continue
@@ -410,7 +412,8 @@ class VoiceSession:
                 if barge is None:
                     continue
                 pcm, _ = self.capture(barge, 0)
-                interruption = self.hear(pcm, need_wake=False) if self.is_owner(pcm, "การพูดแทรก") else None
+                interruption = (self.hear(pcm, need_wake=False)
+                                if self.is_owner(pcm, "การพูดแทรก", in_conversation=True) else None)
                 if interruption is None or not interruption.command:
                     continue  # nothing usable was said
                 if is_echo(interruption.command, " ".join(self._spoken)) and not self._clearly_owner():
