@@ -8,7 +8,9 @@ user speaks over it, and keeps listening for follow-ups without the wake word.
 from __future__ import annotations
 
 import asyncio
+import base64
 import itertools
+import json
 import platform
 import random
 import shutil
@@ -20,6 +22,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from datetime import datetime
+import urllib.request
 from pathlib import Path
 
 from .audio import BYTES_PER_SECOND, SPEECH_RMS, Microphone, rms_level
@@ -115,6 +118,20 @@ def is_echo(heard: str, said: str) -> bool:
     return matched / len(heard) >= ECHO_OVERLAP
 
 
+def speaker_score(pcm: bytes, port: int) -> float | None:
+    """Similarity of `pcm` to the enrolled owner (via the tts service); None if unavailable."""
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/verify",
+        data=json.dumps({"pcm": base64.b64encode(pcm).decode()}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read()).get("score")
+    except (OSError, ValueError):
+        return None
+
+
 def _transcribe(stt: WhisperSTT, pcm: bytes) -> str:
     # A whisper failure on one noisy clip must not end the voice session like a mic error does.
     try:
@@ -148,6 +165,19 @@ class VoiceSession:
         self.last_turn_at = 0.0
         self._spoken: list[str] = []
         self._carry = b""
+        self.last_score: float | None = None
+
+    def is_owner(self, pcm: bytes, what: str) -> bool:
+        """Speaker check; allows everything when disabled or when the service is unavailable."""
+        self.last_score = None
+        if not self.config.speaker_check:
+            return True
+        score = speaker_score(pcm, self.config.f5_port)
+        self.last_score = score
+        if score is None or score >= self.config.speaker_threshold:
+            return True
+        log_voice(f"ไม่ใช่เสียงเจ้าของ ไม่รับ{what} (score={score:.2f} < {self.config.speaker_threshold:.2f})")
+        return False
 
     def capture(self, initial: bytes, wait_seconds: float) -> tuple[bytes, bool]:
         """Microphone.capture, starting with speech the barge-in watcher already heard."""
@@ -213,9 +243,14 @@ class VoiceSession:
                 if gap > 1:
                     loud = gap = 0
             if loud >= BARGE_CHUNKS:
+                audio = b"".join(recent)
+                if not self.is_owner(audio, "การพูดแทรก"):
+                    recent.clear()
+                    loud = gap = 0  # e.g. JARVIS's own voice leaking into the mic: keep talking
+                    continue
                 stop.set()
                 log_voice("ถูกพูดแทรก หยุดพูด")
-                return b"".join(recent)
+                return audio
         if loud:
             # The user started talking just as JARVIS finished: hand that start to the next
             # capture, or its first syllable is lost ("เปิดไฟ" was heard as "ไฟ").
@@ -280,6 +315,8 @@ class VoiceSession:
 
     def handle_wake(self, window: bytes, wake_heard: str) -> None:
         utterance, _ = self.mic.capture(window, 0)
+        if not self.is_owner(utterance, "คำสั่ง"):
+            return
         heard = self.hear(utterance, need_wake=True)
         if heard is None:
             log_voice("ฟังซ้ำแล้วไม่ใช่คำปลุก")
@@ -314,6 +351,8 @@ class VoiceSession:
                 if not got:
                     log_voice("จบบทสนทนา กลับไปรอคำว่า Jarvis")
                     return
+            if not self.is_owner(pcm, "คำถามต่อ"):
+                return
             next_heard = self.hear(pcm, need_wake=False)
             if next_heard is None or not next_heard.command:
                 return
@@ -335,7 +374,8 @@ class VoiceSession:
         barge = self.say(reply, filler=bool(skill and skill.slow))
         said = " ".join(self._spoken)
         self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command=heard.command,
-                          base=heard.base, intent=intent, reply=said, interrupted=barge is not None)
+                          base=heard.base, intent=intent, reply=said, interrupted=barge is not None,
+                          speaker_score=self.last_score)
         self.ctx.history.append((heard.command, said))
         del self.ctx.history[:-HISTORY_TURNS]
         self.last_turn_at = time.monotonic()

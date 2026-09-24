@@ -42,6 +42,12 @@ step = 16
 barge_in = false
 # After a reply, keep listening this long for a follow-up without saying "จาวิส" again.
 follow_up_seconds = 5
+# Only obey the enrolled owner's voice (also stops JARVIS answering its own echo).
+# Enroll with: .venv-tts/bin/python -m jarvis.speaker_id   (runs in the `tts` service)
+speaker_check = true
+# Cosine similarity to the owner's voiceprint. Owner's commands: median 0.56;
+# JARVIS's own voice: max 0.18; echo during the self-hearing loop: 0.12-0.28.
+speaker_threshold = 0.30
 
 [persona]
 # "male" → replies end with ครับ, "female" → ค่ะ. Match the TTS voice.

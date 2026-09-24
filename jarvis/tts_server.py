@@ -7,6 +7,7 @@ replies like "เปิดไฟให้แล้วครับ" are instant a
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -19,6 +20,7 @@ from .config import ROOT, load_config
 
 CACHE_DIR = ROOT / "work" / "tts_cache"
 MAX_TEXT_CHARS = 400
+MAX_VERIFY_BYTES = 2_000_000  # ~45 s of 16 kHz audio as base64
 
 
 def main() -> None:
@@ -35,6 +37,14 @@ def main() -> None:
     started = time.monotonic()
     tts = TTS(model="v1", hf_cache_dir=str(ROOT / ".models" / "f5"))
     print(f"F5-TTS loaded in {time.monotonic() - started:.1f}s", flush=True)
+    verifier = None
+    if config.speaker_check:
+        from .speaker_id import SpeakerVerifier
+
+        verifier = SpeakerVerifier()
+        print("speaker check: " + ("owner enrolled" if verifier.voiceprint is not None
+                                   else "nobody enrolled yet (run python -m jarvis.speaker_id)"), flush=True)
+    verify_lock = threading.Lock()
     lock = threading.Lock()  # one inference at a time: the model is not thread-safe
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fingerprint = hashlib.sha256(ref_audio.read_bytes() + ref_text.encode() + str(config.f5_step).encode()).hexdigest()
@@ -76,10 +86,14 @@ def main() -> None:
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                text = str(json.loads(self.rfile.read(min(length, 8192))).get("text", "")).strip()
-            except (ValueError, AttributeError):
+                body = json.loads(self.rfile.read(min(length, MAX_VERIFY_BYTES)))
+            except ValueError:
                 self._reply(400, b"bad request", "text/plain")
                 return
+            if self.path == "/verify":
+                self._verify(body)
+                return
+            text = str(body.get("text", "")).strip() if isinstance(body, dict) else ""
             if self.path != "/synthesize" or not text or len(text) > MAX_TEXT_CHARS:
                 self._reply(400, b"text required (max 400 chars)", "text/plain")
                 return
@@ -87,6 +101,19 @@ def main() -> None:
             audio = synthesize(text)
             print(f"{time.monotonic() - started:4.1f}s  {text}", flush=True)
             self._reply(200, audio, "audio/wav")
+
+        def _verify(self, body: object) -> None:
+            if verifier is None:
+                self._reply(200, b'{"score": null}', "application/json")
+                return
+            try:
+                pcm = base64.b64decode(body["pcm"], validate=True)  # 16 kHz mono int16
+            except (KeyError, TypeError, ValueError):
+                self._reply(400, b"pcm (base64) required", "text/plain")
+                return
+            with verify_lock:
+                score = verifier.score(pcm)
+            self._reply(200, json.dumps({"score": score}).encode(), "application/json")
 
         def log_message(self, format: str, *args: object) -> None:
             return

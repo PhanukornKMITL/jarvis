@@ -38,6 +38,8 @@ class Config:
     gender: str = "female"
     barge_in: bool = True
     follow_up_seconds: float = 5.0
+    speaker_check: bool = True
+    speaker_threshold: float = 0.30
     weather_lat: float = 13.7563
     weather_lon: float = 100.5018
     dataset_dir: Path | None = ROOT / "work" / "dataset"
@@ -83,6 +85,8 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
         gender=str(persona.get("gender", default.gender)),
         barge_in=bool(voice.get("barge_in", default.barge_in)),
         follow_up_seconds=float(voice.get("follow_up_seconds", default.follow_up_seconds)),
+        speaker_check=bool(voice.get("speaker_check", default.speaker_check)),
+        speaker_threshold=float(voice.get("speaker_threshold", default.speaker_threshold)),
         weather_lat=float(weather.get("lat", default.weather_lat)),
         weather_lon=float(weather.get("lon", default.weather_lon)),
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,
