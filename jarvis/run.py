@@ -39,6 +39,14 @@ def http_healthy(port: int) -> bool:
 
 
 llm_healthy = http_healthy
+
+
+def _whisper_server(model: Path, port: int) -> list[str]:
+    # Same decoding as the CLI path in stt.py: Thai, greedy, no fallback, wake-word prompt.
+    from .wake import WAKE_PROMPT
+
+    return ["whisper-server", "-m", str(model), "--host", "127.0.0.1", "--port", str(port),
+            "-l", "th", "-bs", "1", "-bo", "1", "-nf", "-nt", "--prompt", WAKE_PROMPT]
 TTS_PYTHON = ROOT / ".venv-tts" / "bin" / "python"
 
 
@@ -105,10 +113,16 @@ class Supervisor:
                                    ready_check=lambda: device_online("garden")),
             "tts": Service("tts", "เสียงพูด F5-TTS", [str(TTS_PYTHON), "-m", "jarvis.tts_server"], config.f5_port,
                            lambda: http_healthy(config.f5_port)),
+            "stt_wake": Service("stt_wake", "ฟังคำปลุก (Whisper)", _whisper_server(config.wake_model, config.wake_port),
+                                config.wake_port, lambda: port_open(config.wake_port)),
+            "stt_command": Service("stt_command", "ฟังคำสั่ง (Whisper)",
+                                   _whisper_server(config.command_model, config.command_port),
+                                   config.command_port, lambda: port_open(config.command_port)),
             "voice": Service("voice", "คำสั่งเสียง", [py, "-m", "jarvis.cli", "voice"],
                              ready_check=lambda: self.services["voice"].ready_seen),
         }
-        self.order = ["server"] + [f"fake_{kind}" for kind in config.fake_devices if kind in {"light", "garden"}] + ["llm", "tts"]
+        self.order = (["server"] + [f"fake_{kind}" for kind in config.fake_devices if kind in {"light", "garden"}]
+                      + ["llm", "tts", "stt_wake", "stt_command"])
         if config.autostart_voice:
             self.order.append("voice")
         self.closing = threading.Event()
@@ -126,6 +140,15 @@ class Supervisor:
                 return "ไม่พบ .venv-tts (ดู README หัวข้อ F5-TTS)"
             if not self.config.f5_ref_audio.is_file() or not self.config.f5_ref_audio.with_suffix(".txt").is_file():
                 return f"ไม่พบเสียงต้นแบบ {self.config.f5_ref_audio.name} หรือไฟล์ .txt ของมัน"
+        if name in {"stt_wake", "stt_command"}:
+            port = self.config.wake_port if name == "stt_wake" else self.config.command_port
+            model = self.config.wake_model if name == "stt_wake" else self.config.command_model
+            if not port:
+                return "ปิดอยู่ (port = 0 ใน config.toml)"
+            if not shutil.which("whisper-server"):
+                return "ไม่พบ whisper-server"
+            if not model.is_file():
+                return f"ไม่พบโมเดล {model.name}"
         if name == "voice":
             if not shutil.which("ffmpeg") or not shutil.which("whisper-cli"):
                 return "ไม่พบ ffmpeg หรือ whisper-cli"
@@ -271,8 +294,10 @@ class Supervisor:
         # LLM and TTS model loading run in parallel with fake device registration.
         self.start("llm")
         self.start("tts")
+        self.start("stt_wake")
+        self.start("stt_command")
         for name in self.order:
-            if name in {"server", "llm", "tts", "voice"}:
+            if name in {"server", "llm", "tts", "stt_wake", "stt_command", "voice"}:
                 continue
             if self.closing.is_set():
                 return
@@ -293,7 +318,7 @@ class Supervisor:
 
     def shutdown(self) -> None:
         self.closing.set()
-        for name in ("voice", "fake_garden", "fake_light", "server", "tts", "llm"):
+        for name in ("voice", "fake_garden", "fake_light", "server", "stt_command", "stt_wake", "tts", "llm"):
             self.stop(name)
 
 

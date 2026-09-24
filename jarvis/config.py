@@ -24,6 +24,8 @@ class Config:
     profile: Profile = Profile()
     wake_model: Path = ROOT / ".models" / "ggml-base.bin"
     command_model: Path = ROOT / ".models" / "ggml-small.bin"
+    wake_port: int = 8768
+    command_port: int = 8769
     llm_endpoint: str = "http://127.0.0.1:8080"
     llm_model: Path = ROOT / ".models" / "qwen2-7b-instruct-q4_k_m.gguf"
     fake_devices: tuple[str, ...] = ("light", "garden")
@@ -72,6 +74,8 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
         profile=load_profile(profile_path),
         wake_model=ROOT / stt["wake_model"] if "wake_model" in stt else default.wake_model,
         command_model=ROOT / stt["command_model"] if "command_model" in stt else default.command_model,
+        wake_port=int(stt.get("wake_port", default.wake_port)),
+        command_port=int(stt.get("command_port", default.command_port)),
         llm_endpoint=llm.get("endpoint", default.llm_endpoint),
         llm_model=ROOT / llm["model"] if "model" in llm else default.llm_model,
         fake_devices=tuple(run.get("fake_devices", default.fake_devices)),

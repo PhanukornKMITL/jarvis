@@ -8,6 +8,10 @@ wake_model = ".models/ggml-base.bin"
 # Thonburian Whisper medium (Thai fine-tune by BiodatLab), converted from
 # biodatlab/whisper-th-medium-combined; ~0.95s per command on an M4. See README.
 command_model = ".models/ggml-thonburian-medium-q5_0.bin"
+# whisper-server ports that keep each model loaded (the `stt_wake` / `stt_command` services).
+# 0 = launch whisper-cli for every clip instead (slower: base 0.25s vs 0.10s).
+wake_port = 8768
+command_port = 8769
 
 [llm]
 # OpenAI-compatible chat endpoint (llama-server running Qwen).

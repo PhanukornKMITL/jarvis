@@ -437,8 +437,9 @@ def listen(host: str, port: int, audio_device: str, config: Config) -> int:
     if not config.wake_model.is_file():
         print(f"ไม่พบโมเดลเสียง: {config.wake_model}; รัน ./setup_local_voice.sh ก่อน", file=sys.stderr)
         return 1
-    wake_stt = WhisperSTT(config.wake_model, WAKE_PROMPT)
-    command_stt = WhisperSTT(config.command_model, WAKE_PROMPT) if config.command_model.is_file() else wake_stt
+    wake_stt = WhisperSTT(config.wake_model, WAKE_PROMPT, config.wake_port or None)
+    command_stt = (WhisperSTT(config.command_model, WAKE_PROMPT, config.command_port or None)
+                   if config.command_model.is_file() else wake_stt)
 
     print("กำลังเปิดไมค์เพื่อฟังคำว่า Jarvis (ประมวลผลในเครื่อง; กด Ctrl+C เพื่อหยุด)", flush=True)
     mic = Microphone(ffmpeg, audio_device)
