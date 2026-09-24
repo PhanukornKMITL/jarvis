@@ -333,7 +333,13 @@ def main() -> None:
     supervisor = Supervisor(config)
     if config.dashboard_host not in {"127.0.0.1", "localhost"}:
         print("คำเตือน: dashboard ไม่มีระบบล็อกอิน อย่าเปิดบนเครือข่ายที่ไม่ไว้ใจ", flush=True)
-    httpd = make_server(config.dashboard_host, config.dashboard_port, supervisor)
+    try:
+        httpd = make_server(config.dashboard_host, config.dashboard_port, supervisor)
+    except OSError as error:
+        if error.errno not in (48, 98):  # EADDRINUSE on macOS / Linux
+            raise
+        raise SystemExit(f"JARVIS รันอยู่แล้ว (พอร์ต {config.dashboard_port} ถูกใช้): "
+                         f"เปิด http://{config.dashboard_host}:{config.dashboard_port}/ หรือหยุดตัวเดิมก่อน")
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     print(f"Dashboard: http://{config.dashboard_host}:{config.dashboard_port}/", flush=True)
     threading.Thread(target=supervisor.startup, daemon=True).start()
