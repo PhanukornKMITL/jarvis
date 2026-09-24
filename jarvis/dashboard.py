@@ -13,6 +13,7 @@ from .cli import request
 from .config import Config
 
 HTML = Path(__file__).with_name("dashboard.html")
+CSS = Path(__file__).with_name("dashboard.css")
 
 
 def recent_commands(config: Config) -> list[dict]:
@@ -77,6 +78,14 @@ def make_server(host: str, port: int, supervisor) -> ThreadingHTTPServer:
                 data = HTML.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+            elif path.path == "/dashboard.css":
+                data = CSS.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/css; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()

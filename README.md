@@ -6,6 +6,15 @@ JARVIS ใช้ Python standard library สำหรับ launcher และ d
 
 ## เริ่มใช้งาน
 
+หากต้องการดู UI และ animation โดยไม่เปิดโมเดล ไมโครโฟน หรืออุปกรณ์จริง ให้รัน:
+
+```sh
+python3 -m jarvis.mock_dashboard
+```
+
+บน Windows ใช้ `py -m jarvis.mock_dashboard` แล้วเปิด `http://127.0.0.1:8766/`
+ปุ่มในโหมดนี้เปลี่ยนเฉพาะข้อมูลจำลองในหน่วยความจำ กด Ctrl+C เพื่อหยุด
+
 จาก root ของ repo รันคำสั่งเดียวใน Terminal:
 
 ```sh

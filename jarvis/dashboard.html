@@ -1,28 +1,101 @@
 <!doctype html>
 <html lang="th">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>JARVIS • แดชบอร์ด</title>
-  <style>
-    :root{color-scheme:light dark;--bg:#f4f6f9;--surface:#fff;--text:#17202c;--muted:#64748b;--line:#dce2ea;--accent:#255fd4;--good:#20a46b;--bad:#d94a53;--warn:#d38316}
-    @media(prefers-color-scheme:dark){:root{--bg:#10151e;--surface:#1b2431;--text:#f2f5fa;--muted:#abb8c9;--line:#354252;--accent:#8bb6ff;--good:#46cf97;--bad:#ff777d;--warn:#ffc064}}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,sans-serif}main{max-width:1100px;margin:auto;padding:24px 16px 70px}h1{margin:0;font-size:2rem}h2{font-size:1.3rem;margin:32px 0 12px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.sub,.muted{color:var(--muted)}.banner{padding:10px 14px;border-radius:10px;background:var(--bad);color:white;margin:16px 0}.hidden{display:none!important}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:14px}.card,.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;min-width:0}.card h3{margin:0 0 8px}.device-head{display:flex;justify-content:space-between;gap:10px}.bulb{font-size:2.2rem;line-height:1}.on .bulb{filter:drop-shadow(0 0 8px #f6bd32)}.state{font-weight:700;font-size:1.2rem}.on .state{color:var(--good)}.off .state{color:var(--muted)}button{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:8px;color:var(--text);background:var(--surface);cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.45;cursor:wait}.primary{background:var(--accent);border-color:var(--accent);color:#fff}.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}.row:last-child{border:0}.buttons{display:flex;gap:6px;flex-wrap:wrap}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);margin-right:6px}.dot.running{background:var(--good)}.dot.starting{background:var(--warn)}.dot.crashed,.dot.missing{background:var(--bad)}.dot.external{background:var(--accent)}.small{font-size:.85rem;color:var(--muted)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border-radius:8px;padding:12px;max-height:330px;overflow:auto;font-size:.8rem}progress{width:100%;height:14px;accent-color:var(--good)}.warning{color:var(--warn)}.entry{padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.entry:last-child{border:0}.flash{animation:flash .7s ease}@keyframes flash{50%{outline:3px solid var(--accent)}}@media(max-width:420px){main{padding:18px 12px 50px}h1{font-size:1.6rem}.card,.panel{padding:14px}}
-    .voice-panel{margin-top:18px}.voice-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.voice-head h2{margin:0}.voice-status{font-weight:700}.voice-live{margin:12px 0 0;min-height:105px;max-height:185px}.voice-hint{margin:4px 0 0;color:var(--muted);font-size:.9rem}
-  </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#06131b">
+  <title>JARVIS | Core Interface</title>
+  <link rel="stylesheet" href="/dashboard.css">
 </head>
-<body><main>
-  <div class="top"><div><h1>JARVIS</h1><div class="sub">แดชบอร์ดอุปกรณ์และคำสั่งเสียง</div></div><div id="updated" class="small">กำลังเชื่อมต่อ...</div></div>
-  <div id="error" class="banner hidden" role="alert"></div>
-  <section class="panel voice-panel" aria-label="สถานะเสียงและ log สด">
-    <div class="voice-head"><h2>ไมโครโฟนและ log สด</h2><div id="voice-status" class="voice-status"><span class="dot"></span>กำลังตรวจสอบ...</div></div>
-    <p class="voice-hint">พูด “จาวิส ปิดไฟที” ใส่ไมค์ แล้วดูข้อความที่ระบบได้ยินด้านล่าง</p>
-    <div id="voice-last" class="small">ยังไม่มีคำพูดที่จับได้</div>
-    <pre id="voice-live-log" class="voice-live" aria-live="polite">กำลังโหลด log...</pre>
+<body>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand"><span class="brand-symbol" aria-hidden="true">J</span><span>JARVIS <small>CORE INTERFACE</small></span></div>
+    <div class="topbar-meta"><span class="topbar-network"><span class="status-led"></span> LOCAL SYSTEM</span><span id="updated" class="small">กำลังเชื่อมต่อ...</span></div>
+  </header>
+  <main>
+  <section class="hero" aria-label="JARVIS core visualization">
+    <svg class="schematic" viewBox="0 0 1200 650" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <defs><pattern id="small-grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#65ccdf" stroke-opacity=".14" stroke-width=".7"/></pattern></defs>
+      <rect width="1200" height="650" fill="url(#small-grid)" opacity=".45"/>
+      <g fill="none" stroke="#75dcec" stroke-opacity=".13" stroke-width="1">
+        <path d="M0 86h183v39h102m630-54h124v78h161M0 525h228v-44h94m586 59h147v-33h145"/>
+        <path d="M83 0v173h68v56m895-229v121h-71v87M29 382h160v58h143m624-49h162v-64h82"/>
+        <path d="M132 51h121v92H92v81h96m820 15h112v104h-84M156 618v-93h120v-62m768 155v-88h-73"/>
+        <circle cx="183" cy="125" r="4"/><circle cx="1008" cy="239" r="4"/><circle cx="228" cy="481" r="4"/><circle cx="972" cy="530" r="4"/>
+        <rect x="48" y="55" width="145" height="74"/><rect x="1025" y="90" width="128" height="95"/><rect x="82" y="480" width="154" height="103"/><rect x="1008" y="448" width="145" height="130"/>
+      </g>
+      <g fill="#8ceafa" fill-opacity=".18" font-size="9" font-family="monospace" letter-spacing="2">
+        <text x="59" y="73">SYSTEM / 001</text><text x="1036" y="108">BIO DATA</text><text x="93" y="501">NODE MATRIX</text><text x="1019" y="468">AUX MODULE</text>
+      </g>
+    </svg>
+    <div class="hero-side hero-side-left" aria-hidden="true"><span>CORE // 001</span><i></i><span>ACTIVE NODE</span><span>LOCAL NETWORK</span></div>
+    <div class="hero-side hero-side-right" aria-hidden="true"><span>SYS STATUS</span><i></i><span>VOICE CHANNEL</span><span>DEVICE BUS</span></div>
+    <div class="hud">
+      <svg class="hud-svg" viewBox="0 0 600 600" aria-hidden="true">
+        <defs>
+          <linearGradient id="arc-gradient" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#32b4d4"/><stop offset=".48" stop-color="#a8f5ff"/><stop offset="1" stop-color="#4cc9e7"/></linearGradient>
+          <filter id="cyan-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5"/></filter>
+        </defs>
+        <circle cx="300" cy="300" r="270" fill="none" stroke="#3ec8df" stroke-opacity=".12" stroke-width="1"/>
+        <circle cx="300" cy="300" r="258" fill="none" stroke="#59dff4" stroke-opacity=".17" stroke-width="1" stroke-dasharray="4 9"/>
+        <g class="ring-spin-slow">
+          <circle cx="300" cy="300" r="248" fill="none" stroke="#73eafa" stroke-opacity=".18" stroke-width="17" stroke-dasharray="6 14 82 22 4 190 38 175"/>
+          <circle cx="300" cy="300" r="248" fill="none" stroke="url(#arc-gradient)" stroke-width="7" stroke-linecap="round" stroke-dasharray="570 210 145 635"/>
+          <circle cx="300" cy="300" r="248" fill="none" stroke="#a4f8ff" stroke-width="12" stroke-linecap="round" stroke-dasharray="5 375 6 370 5 800"/>
+        </g>
+        <circle cx="300" cy="300" r="222" fill="none" stroke="#6bdff2" stroke-opacity=".15" stroke-width="40"/>
+        <g class="ring-spin-reverse">
+          <circle cx="300" cy="300" r="222" fill="none" stroke="url(#arc-gradient)" stroke-opacity=".72" stroke-width="38" stroke-dasharray="455 160 285 495"/>
+          <circle cx="300" cy="300" r="222" fill="none" stroke="#b9f8ff" stroke-opacity=".34" stroke-width="2" stroke-dasharray="310 30 350 705"/>
+        </g>
+        <circle cx="300" cy="300" r="189" fill="none" stroke="#86edfa" stroke-opacity=".65" stroke-width="16" stroke-dasharray="2 19"/>
+        <circle cx="300" cy="300" r="188" fill="none" stroke="#ceefff" stroke-opacity=".22" stroke-width="1"/>
+        <g class="ring-spin-slow ring-markers"><circle cx="300" cy="300" r="178" fill="none" stroke="#efd152" stroke-width="5" stroke-linecap="round" stroke-dasharray="1 46"/><circle cx="300" cy="300" r="178" fill="none" stroke="#67e7f8" stroke-opacity=".62" stroke-width="3" stroke-dasharray="240 880"/></g>
+        <circle cx="300" cy="300" r="165" fill="#03131b" fill-opacity=".72" stroke="#68ecf7" stroke-opacity=".18" stroke-width="18"/>
+        <circle cx="300" cy="300" r="157" fill="none" stroke="#77eeff" stroke-opacity=".45" stroke-width="8" filter="url(#cyan-glow)"/>
+        <circle cx="300" cy="300" r="157" fill="none" stroke="#a2f5ff" stroke-width="5" stroke-dasharray="670 315" stroke-linecap="round"/>
+        <circle cx="300" cy="300" r="145" fill="none" stroke="#61d4e8" stroke-opacity=".16" stroke-width="1" stroke-dasharray="2 7"/>
+        <g stroke="#7ddbea" stroke-opacity=".16" fill="none" stroke-width="1"><circle cx="300" cy="300" r="108"/><circle cx="300" cy="300" r="80"/><path d="M150 300h300M300 150v300M193 193l214 214m0-214L193 407"/></g>
+      </svg>
+      <div class="hud-center">
+        <span class="center-eyebrow">LOCAL INTELLIGENCE CORE</span>
+        <h1>J.A.R.V.I.S.</h1>
+        <span class="center-rule" aria-hidden="true"></span>
+        <div id="voice-status" class="voice-status" aria-live="polite"><span class="dot"></span>กำลังตรวจสอบ...</div>
+      </div>
+      <span class="hud-scan" aria-hidden="true"></span>
+    </div>
+    <div class="hero-footer" aria-hidden="true"><span>VOICE INTERFACE // ONLINE READY</span><span>LOCAL DEVICE NETWORK</span></div>
   </section>
-  <h2>อุปกรณ์</h2><div id="devices" class="grid"></div>
-  <h2>บริการ</h2><div id="services" class="panel"></div><div id="logs" class="hidden"></div>
-  <h2>คำสั่งเสียงล่าสุด</h2><div id="recent" class="panel"></div>
-</main><script>
+  <div id="error" class="banner hidden" role="alert"></div>
+  <div class="section-label"><span>01 / SYSTEM OVERVIEW</span><span class="section-line"></span><span>LIVE TELEMETRY</span></div>
+  <div class="overview-grid">
+    <section class="panel voice-panel" aria-label="สถานะเสียงและ log สด">
+      <div class="panel-heading"><div><span class="panel-kicker">AUDIO INPUT</span><h2>ไมโครโฟนและ log สด</h2></div><span class="panel-index">01</span></div>
+      <p class="voice-hint">พูด “จาวิส ปิดไฟที” ใส่ไมค์ แล้วดูข้อความที่ระบบได้ยินด้านล่าง</p>
+      <div id="voice-last" class="small voice-last">ยังไม่มีคำพูดที่จับได้</div>
+      <pre id="voice-live-log" class="voice-live" aria-live="polite">กำลังโหลด log...</pre>
+    </section>
+    <section class="panel devices-panel" aria-label="อุปกรณ์">
+      <div class="panel-heading"><div><span class="panel-kicker">CONNECTED NODES</span><h2>อุปกรณ์</h2></div><span class="panel-index">02</span></div>
+      <div id="devices" class="grid"></div>
+    </section>
+  </div>
+  <div class="operations-grid">
+    <section class="panel services-panel" aria-label="บริการ">
+      <div class="panel-heading"><div><span class="panel-kicker">PROCESS CONTROL</span><h2>บริการ</h2></div><span class="panel-index">03</span></div>
+      <div id="services"></div>
+    </section>
+    <section class="panel recent-panel" aria-label="คำสั่งเสียงล่าสุด">
+      <div class="panel-heading"><div><span class="panel-kicker">VOICE HISTORY</span><h2>คำสั่งเสียงล่าสุด</h2></div><span class="panel-index">04</span></div>
+      <div id="recent"></div>
+    </section>
+  </div>
+  <div id="logs" class="hidden"></div>
+  </main>
+  <footer class="app-footer"><span>JARVIS CORE / LOCAL CONTROL SYSTEM</span><span>DESIGNED FOR PRIVATE NETWORK</span></footer>
+</div><script>
 const $=id=>document.getElementById(id);let previous={},busy=new Set(),openLog=null,logTimer=null;
 function el(tag,cls,text){const x=document.createElement(tag);if(cls)x.className=cls;if(text!==undefined)x.textContent=String(text);return x}
 function showError(message){$('error').textContent=message;$('error').classList.toggle('hidden',!message)}
