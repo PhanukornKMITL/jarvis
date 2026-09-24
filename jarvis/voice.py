@@ -11,6 +11,7 @@ import asyncio
 import base64
 import itertools
 import json
+import math
 import platform
 import random
 import re
@@ -62,6 +63,12 @@ BARGE_CHUNK_SECONDS = 0.1
 BARGE_CHUNKS = 4
 # Audio kept from before the loud part: the quiet start of "เปิด" was lost with less.
 PREROLL_CHUNKS = 6
+# Echo without hardware AEC: the mic hears JARVIS (on the WH-CH520: mic ≈ 0.26×playback
+# median, 0.54 p90, correlation 0.80). The expected leak is subtracted from the mic level
+# before deciding the user is talking; the ratio keeps adapting to mic and volume.
+LEAK_GAIN_START = 0.6
+LEAK_GAIN_RANGE = (0.2, 1.5)
+LEAK_SAMPLES = 300
 # Follow-ups without the wake word end after this many turns, so a TV can't chat forever.
 MAX_FOLLOW_UPS = 5
 HISTORY_TURNS = 6
@@ -176,6 +183,8 @@ class VoiceSession:
         self._spoken: list[str] = []
         self._carry = b""
         self.last_score: float | None = None
+        self.leak_gain = LEAK_GAIN_START
+        self._leak_ratios: deque[float] = deque(maxlen=LEAK_SAMPLES)
 
     def is_owner(self, pcm: bytes, what: str, in_conversation: bool = False) -> bool:
         """Speaker check; allows everything when disabled or when the service is unavailable.
@@ -269,7 +278,7 @@ class VoiceSession:
         while not done.is_set():
             chunk = self.mic.read(chunk_bytes)
             recent.append(chunk)
-            if rms_level(chunk) >= BARGE_RMS:
+            if self._user_level(rms_level(chunk), loud) >= BARGE_RMS:
                 loud, gap = loud + 1, 0
             elif loud:
                 gap += 1
@@ -290,6 +299,23 @@ class VoiceSession:
             # capture, or its first syllable is lost ("เปิดไฟ" was heard as "ไฟ").
             self._carry = b"".join(recent)
         return None
+
+    def _user_level(self, mic_rms: float, loud: int) -> float:
+        """Mic level left after removing JARVIS's expected echo (energies subtract)."""
+        playing = self.speaker.playback_level(time.monotonic())
+        echo = self.leak_gain * playing
+        user = math.sqrt(max(0.0, mic_rms * mic_rms - echo * echo))
+        ratio = mic_rms / playing if playing > 500 else None
+        if ratio is not None and not loud and ratio <= LEAK_GAIN_RANGE[1]:
+            # Ratios in the echo range teach the gain (talking over JARVIS usually pushes the
+            # ratio above it); gating on the subtracted level instead could never raise a
+            # gain that started too low.
+            self._leak_ratios.append(ratio)
+            if len(self._leak_ratios) >= 20:
+                ordered = sorted(self._leak_ratios)
+                low, high = LEAK_GAIN_RANGE
+                self.leak_gain = min(high, max(low, ordered[int(len(ordered) * 0.9)] * 1.2))
+        return user
 
     def warm_up(self) -> None:
         """Pre-generates the fixed replies so they play instantly instead of after synthesis."""

@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import array
+import io
 import itertools
 import json
+import math
 import platform
 import queue
 import re
@@ -15,11 +18,24 @@ import tempfile
 import threading
 import time
 import urllib.request
+import wave
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 PIPER_MODEL = Path(__file__).resolve().parent.parent / ".models" / "piper" / "th_TH-tsync2-medium.onnx"
 _POLL_SECONDS = 0.05
+ENVELOPE_SECONDS = 0.1
+# Level assumed while `say` plays (its audio isn't available to measure).
+SAY_LEVEL = 3000.0
+
+
+def wav_envelope(audio: bytes) -> list[float]:
+    """RMS of a 16-bit WAV in ENVELOPE_SECONDS steps (same scale as the mic's rms_level)."""
+    with wave.open(io.BytesIO(audio)) as wav_file:
+        step = int(wav_file.getframerate() * ENVELOPE_SECONDS) * wav_file.getnchannels()
+        samples = array.array("h", wav_file.readframes(wav_file.getnframes()))
+    return [math.sqrt(sum(x * x for x in samples[i:i + step]) / max(len(samples[i:i + step]), 1))
+            for i in range(0, len(samples), step)]
 
 
 _DIGITS = ("ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า")
@@ -141,6 +157,21 @@ class Speaker:
         self.unspoken: list[str] = []
         """After a stopped speak(): the cut-off part and the parts already pulled but not played,
         in order. Parts still inside the caller's iterator were never taken."""
+        self._playing: tuple[float, list[float] | None] | None = None
+
+    def playback_level(self, now: float, before: float = 0.2, after: float = 0.1) -> float:
+        """How loud JARVIS is playing around `now` (0 when silent). A window, because the mic
+        hears the speaker slightly late and syllable timing jitters."""
+        playing = self._playing
+        if playing is None:
+            return 0.0
+        start, envelope = playing
+        if envelope is None:
+            return SAY_LEVEL
+        first = max(0, int((now - start - before) / ENVELOPE_SECONDS))
+        last = int((now - start + after) / ENVELOPE_SECONDS) + 1
+        window = envelope[first:last]
+        return max(window) if window else 0.0
 
     def speak(self, parts: Iterable[str], stop: threading.Event | None = None) -> float:
         """Speaks each part in order; returns seconds spent. Setting `stop` cuts it off."""
@@ -196,8 +227,10 @@ class Speaker:
             try:
                 handle.write(audio)
                 handle.close()
+                self._playing = (time.monotonic(), wav_envelope(audio))
                 _run_until_stopped([*player, handle.name], stop)
             finally:
+                self._playing = None
                 Path(handle.name).unlink(missing_ok=True)
             if stop.is_set():
                 self.unspoken.append(text)  # cut off mid-sentence: resume from its start
@@ -218,7 +251,11 @@ class Speaker:
                 self.unspoken.append(text)
                 return
             print(f"JARVIS: {text}", flush=True)
-            _run_until_stopped([say, "-v", self.voice, text], stop)
+            self._playing = (time.monotonic(), None)
+            try:
+                _run_until_stopped([say, "-v", self.voice, text], stop)
+            finally:
+                self._playing = None
             if stop.is_set():
                 self.unspoken.append(text)
                 return
