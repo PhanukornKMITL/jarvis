@@ -1,37 +1,25 @@
-"""Text-to-speech. speak() blocks while talking and returns how long audio played."""
+"""Text-to-speech. Speaker.speak() blocks while talking, can be stopped mid-sentence
+(barge-in), and accepts sentences as they stream in from the LLM."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import platform
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 PIPER_MODEL = Path(__file__).resolve().parent.parent / ".models" / "piper" / "th_TH-tsync2-medium.onnx"
-
-
-def speak(text: str, voice: str = "Kanya", f5_port: int | None = None) -> float:
-    """`voice` is the macOS `say` voice; with `f5_port` the F5-TTS server is tried first."""
-    print(f"JARVIS: {text}", flush=True)
-    if f5_port:
-        played = _speak_f5(text, f5_port)
-        if played is not None:
-            return played
-    if platform.system() == "Windows":
-        return _speak_windows(text)
-    say = shutil.which("say")
-    if not say:
-        return 0.0
-    start = time.monotonic()
-    subprocess.run([say, "-v", voice, text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    return time.monotonic() - start
+_POLL_SECONDS = 0.05
 
 
 def split_sentences(text: str, min_chars: int = 20) -> list[str]:
@@ -63,40 +51,91 @@ def _player() -> list[str] | None:
     return [ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet"] if ffplay else None
 
 
-def _speak_f5(text: str, port: int) -> float | None:
-    """Plays each sentence while the next one is generated; None if the server is unreachable."""
-    player = _player()
-    sentences = split_sentences(text)
-    if not player or not sentences:
-        return None
-    start = time.monotonic()
-    playing: subprocess.Popen | None = None
-    files: list[Path] = []
-    try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            pending = pool.submit(synthesize_f5, sentences[0], port)
-            for index in range(len(sentences)):
-                try:
-                    audio = pending.result()
-                except OSError:
-                    if index == 0:
-                        return None  # nothing played yet: let the caller fall back to `say`
-                    break
-                if index + 1 < len(sentences):
-                    pending = pool.submit(synthesize_f5, sentences[index + 1], port)
-                handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+def _run_until_stopped(command: list[str], stop: threading.Event) -> None:
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    while process.poll() is None:
+        if stop.wait(_POLL_SECONDS):
+            process.terminate()
+            process.wait()
+            return
+
+
+class Speaker:
+    """`voice` is the macOS `say` voice; with `f5_port` the F5-TTS server is tried first."""
+
+    def __init__(self, voice: str = "Kanya", f5_port: int | None = None) -> None:
+        self.voice = voice
+        self.f5_port = f5_port
+
+    def speak(self, parts: Iterable[str], stop: threading.Event | None = None) -> float:
+        """Speaks each part in order; returns seconds spent. Setting `stop` cuts it off."""
+        stop = stop or threading.Event()
+        parts = iter(parts)
+        start = time.monotonic()
+        if self.f5_port and _player():
+            unspoken = self._speak_f5(parts, stop)
+            if unspoken is None:
+                return time.monotonic() - start
+            parts = itertools.chain(unspoken, parts)  # F5 went down: finish with `say`
+        self._speak_basic(parts, stop)
+        return time.monotonic() - start
+
+    def _speak_f5(self, parts: Iterator[str], stop: threading.Event) -> list[str] | None:
+        """Synthesizes the next part while the current one plays. Returns the parts that
+        could not be synthesized (for the fallback), or None when everything was handled."""
+        player = _player()
+        assert player is not None and self.f5_port is not None
+        ready: queue.Queue[tuple[str, bytes] | None] = queue.Queue(maxsize=2)
+        failed: list[str] = []
+
+        def produce() -> None:
+            try:
+                for text in parts:  # may pull from a live LLM stream
+                    if stop.is_set():
+                        return
+                    try:
+                        audio = synthesize_f5(text, self.f5_port)
+                    except OSError:
+                        failed.append(text)
+                        return
+                    ready.put((text, audio))
+            finally:
+                ready.put(None)
+
+        producer = threading.Thread(target=produce, daemon=True)
+        producer.start()
+        while (item := ready.get()) is not None:
+            if stop.is_set():
+                continue
+            text, audio = item
+            print(f"JARVIS: {text}", flush=True)
+            handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            try:
                 handle.write(audio)
                 handle.close()
-                files.append(Path(handle.name))
-                if playing:
-                    playing.wait()
-                playing = subprocess.Popen([*player, handle.name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if playing:
-                playing.wait()
-    finally:
-        for path in files:
-            path.unlink(missing_ok=True)
-    return time.monotonic() - start
+                _run_until_stopped([*player, handle.name], stop)
+            finally:
+                Path(handle.name).unlink(missing_ok=True)
+        producer.join()
+        return failed or None
+
+    def _speak_basic(self, parts: Iterable[str], stop: threading.Event) -> None:
+        if platform.system() == "Windows":
+            text = " ".join(parts)
+            if text:
+                print(f"JARVIS: {text}", flush=True)
+                _speak_windows(text)
+            return
+        say = shutil.which("say")
+        for text in parts:
+            if stop.is_set() or not say:
+                return
+            print(f"JARVIS: {text}", flush=True)
+            _run_until_stopped([say, "-v", self.voice, text], stop)
+
+
+def speak(text: str, voice: str = "Kanya", f5_port: int | None = None) -> float:
+    return Speaker(voice, f5_port).speak(split_sentences(text) or [text])
 
 
 def _has_latin_text(text: str) -> bool:

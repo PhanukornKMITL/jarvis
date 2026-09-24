@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Callable
 
 from ..cli import request
@@ -13,6 +14,8 @@ class Context:
     host: str
     port: int
     config: Config
+    history: list[tuple[str, str]] = field(default_factory=list)
+    """Recent (user said, JARVIS replied) turns of the current conversation, oldest first."""
 
     def devices(self) -> list[dict]:
         return asyncio.run(request(self.host, self.port, {"type": "status"})).get("devices", [])
@@ -34,3 +37,7 @@ class Skill:
     """The LLM may not pick this skill by itself: a wrong guess acts on something (e.g. switches a light)."""
     mentions: Callable[[str], bool] | None = None
     """For rule_only skills: text that sounds like this topic becomes unclear instead of chat."""
+    slow: bool = False
+    """Takes seconds (network, LLM): JARVIS says a short filler first so the wait isn't silent."""
+    stream: Callable[[Context, str], Iterator[str]] | None = None
+    """Yields the reply sentence by sentence so speech can start before it is complete."""

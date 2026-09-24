@@ -124,6 +124,17 @@ git-ignored `.models/`: a voice clip is someone's voice and must not be committe
 
 `[persona] gender` sets ครับ/ค่ะ and ผม/ฉัน for every reply; match it to the voice.
 
+### Conversation
+
+After the wake word JARVIS stays in a conversation:
+
+- slow answers (chat, weather) start with a cached filler ("อืม สักครู่นะครับ");
+- chat replies stream from Qwen and are spoken sentence by sentence (first audio in ~1 s);
+- speaking over JARVIS stops it and your words become the next command (`[voice] barge_in`;
+  meant for a headset, where JARVIS barely hears itself);
+- for `[voice] follow_up_seconds` after a reply you can ask again without "จาวิส", and
+  chat remembers the last few turns (up to 5 follow-ups, history expires after 3 minutes).
+
 ## Try local voice on Windows
 
 Install FFmpeg and whisper.cpp so that `ffmpeg` and `whisper-cli` are available

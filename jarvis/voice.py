@@ -1,12 +1,23 @@
-"""Voice pipeline: mic → wake word → speech-to-text → intent → skill → speech."""
+"""Voice pipeline: mic → wake word → speech-to-text → intent → skill → speech.
+
+After the wake word JARVIS stays in a conversation: it says a short filler while a slow
+answer is prepared, streams long answers sentence by sentence, stops talking when the
+user speaks over it, and keeps listening for follow-ups without the wake word.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import platform
+import random
 import shutil
 import sys
 import threading
+import time
+from collections import deque
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -17,14 +28,16 @@ from .intent import UNCLEAR, classify
 from .persona import apply_persona
 from .skills import BY_INTENT, Context
 from .skills.light import OFF_REPLY, ON_REPLY
-from .stt import WhisperSTT, clean_transcript
-from .tts import speak, synthesize_f5
+from .stt import SAMPLE_RATE, WhisperSTT, clean_transcript
+from .tts import Speaker, split_sentences, synthesize_f5
 from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, split_wake
 
 READY_REPLY = "พร้อมฟังค่ะ"
 UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอีกทีนะคะ"
 NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ"
-WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY)
+ERROR_REPLY = "ติดต่อ JARVIS หรือ Qwen ไม่ได้ค่ะ"
+FILLERS = ("อืม ขอคิดแป๊บนึงนะคะ", "อืม สักครู่นะคะ", "ได้ค่ะ ขอเช็คแป๊บนึงนะคะ")
+WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS)
 
 # Short polls while waiting for the wake word so "Jarvis" is noticed quickly.
 WAKE_STEP_SECONDS = 2
@@ -32,6 +45,17 @@ OVERLAP_BYTES = 1 * BYTES_PER_SECOND
 LISTEN_TIMEOUT_SECONDS = 6
 # People pause after the name ("จาร์วิส … ปิดไฟ"); real recordings showed up to 1.25s.
 AFTER_WAKE_GRACE_SECONDS = 1.5
+# Barge-in: well above the wake threshold and sustained, so room noise doesn't cut JARVIS
+# off. Headset leak of JARVIS's own voice into its mic measured weak (envelope r≈0.29).
+BARGE_RMS = SPEECH_RMS * 3
+BARGE_CHUNK_SECONDS = 0.1
+BARGE_CHUNKS = 4
+# Audio kept from before the loud part: the quiet start of "เปิด" was lost with less.
+PREROLL_CHUNKS = 6
+# Follow-ups without the wake word end after this many turns, so a TV can't chat forever.
+MAX_FOLLOW_UPS = 5
+HISTORY_TURNS = 6
+HISTORY_EXPIRES_SECONDS = 180
 LOG_PATH = Path(__file__).resolve().parent.parent / "work" / "voice_transcript.log"
 
 
@@ -43,18 +67,40 @@ def log_voice(message: str) -> None:
         log_file.write(line + "\n")
 
 
-def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str]:
-    """Returns (intent, reply to speak)."""
+def _guarded(parts: Iterator[str]) -> Iterator[str]:
+    """Runs inside the speaker's thread; a failing skill still gets a spoken reply."""
+    said = False
+    try:
+        for part in parts:
+            said = True
+            yield part
+    except (ConnectionRefusedError, asyncio.TimeoutError, OSError, ValueError, KeyError):
+        if not said:
+            yield ERROR_REPLY
+
+
+def _deferred(skill, ctx: Context, text: str) -> Iterator[str]:
+    yield from split_sentences(skill.handle(ctx, text))
+
+
+def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str]]:
+    """Returns (intent, reply). Slow skills return a lazy iterator so they run while the
+    filler plays; everything else returns the finished text."""
     try:
         intent = classify(text, ctx.config.llm_endpoint, alternatives)
     except (OSError, ValueError, KeyError):
         return "error", "ติดต่อ Qwen ไม่ได้ค่ะ"
     if intent == UNCLEAR:
         return intent, UNCLEAR_REPLY
+    skill = BY_INTENT[intent]
+    if skill.stream:
+        return intent, _guarded(skill.stream(ctx, text))
+    if skill.slow:
+        return intent, _guarded(_deferred(skill, ctx, text))
     try:
-        return intent, BY_INTENT[intent].handle(ctx, text)
+        return intent, skill.handle(ctx, text)
     except (ConnectionRefusedError, asyncio.TimeoutError, OSError, ValueError, KeyError):
-        return intent, "ติดต่อ JARVIS หรือ Qwen ไม่ได้ค่ะ"
+        return intent, ERROR_REPLY
 
 
 def _transcribe(stt: WhisperSTT, pcm: bytes) -> str:
@@ -64,6 +110,15 @@ def _transcribe(stt: WhisperSTT, pcm: bytes) -> str:
     except RuntimeError as error:
         print(f"ข้ามช่วงเสียงนี้: {error}", file=sys.stderr, flush=True)
         return ""
+
+
+@dataclass
+class Heard:
+    pcm: bytes
+    full: str
+    command: str
+    base: str
+    alternatives: tuple[str, ...]
 
 
 class VoiceSession:
@@ -77,22 +132,96 @@ class VoiceSession:
         self.command_stt = command_stt
         self.dataset = Dataset(config.dataset_dir)
         self.f5_port = config.f5_port if config.tts_engine == "f5" else None
+        self.speaker = Speaker(config.tts_voice, self.f5_port)
+        self.last_turn_at = 0.0
+        self._spoken: list[str] = []
+        self._carry = b""
 
-    def render(self, text: str) -> str:
-        return apply_persona(text, self.config.gender, self.config.profile.name)
+    def capture(self, initial: bytes, wait_seconds: float) -> tuple[bytes, bool]:
+        """Microphone.capture, starting with speech the barge-in watcher already heard."""
+        carry, self._carry = self._carry, b""
+        if carry and not initial:
+            return self.mic.capture(carry, 0)
+        return self.mic.capture(initial, wait_seconds)
 
-    def say(self, text: str) -> None:
-        self.mic.drain(speak(self.render(text), self.config.tts_voice, self.f5_port))
+    # --- speaking -------------------------------------------------------------------
+
+    def render(self, text: str, with_name: bool = True) -> str:
+        return apply_persona(text, self.config.gender, self.config.profile.name if with_name else "")
+
+    def _rendered(self, reply: str | Iterable[str]) -> Iterator[str]:
+        """Applies the persona per sentence (the name only once) and records what was said."""
+        name = self.config.profile.name
+        if isinstance(reply, str):
+            with_name = not name or name not in reply
+            reply = split_sentences(reply) or [reply]
+        else:
+            with_name = True
+        for index, part in enumerate(reply):
+            text = self.render(part, with_name=with_name and index == 0)
+            self._spoken.append(text)
+            yield text
+
+    def say(self, reply: str | Iterable[str], filler: bool = False) -> bytes | None:
+        """Speaks a reply. Returns the user's audio if they spoke over JARVIS (barge-in)."""
+        parts: Iterator[str] = self._rendered(reply)
+        if filler:
+            parts = itertools.chain([self.render(random.choice(FILLERS), with_name=False)], parts)
+        if not self.config.barge_in:
+            self.mic.drain(self.speaker.speak(parts))
+            return None
+        # Audio buffered while JARVIS was thinking must not be mistaken for barge-in.
+        self.mic.drain(30)
+        self._carry = b""
+        stop, done = threading.Event(), threading.Event()
+
+        def talk() -> None:
+            try:
+                self.speaker.speak(parts, stop)
+            finally:
+                done.set()
+
+        talker = threading.Thread(target=talk, daemon=True)
+        talker.start()
+        barge = self._watch_for_barge_in(done, stop)
+        talker.join()
+        return barge
+
+    def _watch_for_barge_in(self, done: threading.Event, stop: threading.Event) -> bytes | None:
+        chunk_bytes = int(BARGE_CHUNK_SECONDS * SAMPLE_RATE) * 2
+        recent: deque[bytes] = deque(maxlen=BARGE_CHUNKS + PREROLL_CHUNKS)
+        loud = gap = 0
+        while not done.is_set():
+            chunk = self.mic.read(chunk_bytes)
+            recent.append(chunk)
+            if rms_level(chunk) >= BARGE_RMS:
+                loud, gap = loud + 1, 0
+            elif loud:
+                gap += 1
+                if gap > 1:
+                    loud = gap = 0
+            if loud >= BARGE_CHUNKS:
+                stop.set()
+                log_voice("ถูกพูดแทรก หยุดพูด")
+                return b"".join(recent)
+        if loud:
+            # The user started talking just as JARVIS finished: hand that start to the next
+            # capture, or its first syllable is lost ("เปิดไฟ" was heard as "ไฟ").
+            self._carry = b"".join(recent)
+        return None
 
     def warm_up(self) -> None:
         """Pre-generates the fixed replies so they play instantly instead of after synthesis."""
         if not self.f5_port:
             return
-        for text in WARM_PHRASES:
+        texts = [self.render(t) for t in WARM_PHRASES[:5]] + [self.render(t, with_name=False) for t in FILLERS]
+        for text in texts:
             try:
-                synthesize_f5(self.render(text), self.f5_port, timeout=120)
+                synthesize_f5(text, self.f5_port, timeout=120)
             except OSError:
                 return
+
+    # --- listening ------------------------------------------------------------------
 
     def run(self) -> None:
         overlap = b""
@@ -119,41 +248,81 @@ class VoiceSession:
             overlap = b""
             self.wake.reset()
 
+    def hear(self, pcm: bytes, need_wake: bool) -> Heard | None:
+        """Transcribes an utterance; None if `need_wake` and the name isn't in it after all."""
+        full = _transcribe(self.command_stt, pcm)
+        after = split_wake(full)
+        if need_wake and after is None:
+            return None
+        command = clean_transcript(full if after is None else after)
+        # A second opinion from the wake model: on this headset it sometimes hears "ปิด"
+        # better, and the light rules refuse to act when the two disagree.
+        base = ""
+        if self.command_stt is not self.wake_stt:
+            base_full = _transcribe(self.wake_stt, pcm)
+            base_after = split_wake(base_full)
+            base = clean_transcript(base_after if base_after is not None else ("" if need_wake else base_full))
+            command = command or base
+        alternatives = (base,) if base and base != command else ()
+        return Heard(pcm, full, command, base, alternatives)
+
     def handle_wake(self, window: bytes, wake_heard: str) -> None:
         utterance, _ = self.mic.capture(window, 0)
-        full_text = _transcribe(self.command_stt, utterance)
-        command_text = split_wake(full_text)
-        if command_text is None:
-            log_voice(f"ฟังซ้ำแล้วไม่ใช่คำปลุก: {full_text}")
+        heard = self.hear(utterance, need_wake=True)
+        if heard is None:
+            log_voice("ฟังซ้ำแล้วไม่ใช่คำปลุก")
             return
-        command_text = clean_transcript(command_text)
-        # A second opinion from the wake model: small sometimes drops a short phrase after
-        # the name, and on this headset base hears "ปิด" better (small turns it into "พิ").
-        base_text = ""
-        if self.command_stt is not self.wake_stt:
-            base_text = clean_transcript(split_wake(_transcribe(self.wake_stt, utterance)) or "")
-            command_text = command_text or base_text
-        alternatives = (base_text,) if base_text and base_text != command_text else ()
-        if not command_text:
-            follow, heard = self.mic.capture(b"", AFTER_WAKE_GRACE_SECONDS)
-            if not heard:
-                self.say(READY_REPLY)
-                follow, heard = self.mic.capture(b"", LISTEN_TIMEOUT_SECONDS)
-            if heard:
-                utterance += follow
-                follow_text = _transcribe(self.command_stt, follow)
-                after_wake = split_wake(follow_text)
-                command_text = clean_transcript(follow_text if after_wake is None else after_wake)
-        if not command_text:
-            self.dataset.save(utterance, wake=wake_heard, transcript=full_text, command="", intent=None)
+        if not heard.command:
+            follow, got = self.mic.capture(b"", AFTER_WAKE_GRACE_SECONDS)
+            if not got:
+                barge = self.say(READY_REPLY)
+                follow, got = self.capture(barge or b"", 0 if barge else LISTEN_TIMEOUT_SECONDS)
+            if got:
+                heard = self.hear(follow, need_wake=False) or heard
+                heard.pcm = utterance + follow
+        if not heard.command:
+            self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command="", intent=None)
             self.say(NOT_HEARD_REPLY)
             return
-        log_voice(f"คำสั่ง: {command_text}" + (f" (base: {alternatives[0]})" if alternatives else ""))
-        intent, reply = answer(self.ctx, command_text, alternatives)
+        self.converse(heard, wake_heard)
+
+    def converse(self, heard: Heard, wake_heard: str) -> None:
+        """Answers, then keeps listening for follow-ups (or interruptions) without the wake word."""
+        if time.monotonic() - self.last_turn_at > HISTORY_EXPIRES_SECONDS:
+            self.ctx.history.clear()
+        follow_ups = 0
+        while True:
+            barge = self.respond(heard, wake_heard)
+            if barge is not None:
+                pcm, _ = self.capture(barge, 0)
+            else:
+                if follow_ups >= MAX_FOLLOW_UPS:
+                    return
+                pcm, got = self.capture(b"", self.config.follow_up_seconds)
+                if not got:
+                    log_voice("จบบทสนทนา กลับไปรอคำว่า Jarvis")
+                    return
+            next_heard = self.hear(pcm, need_wake=False)
+            if next_heard is None or not next_heard.command:
+                return
+            heard, wake_heard = next_heard, ""
+            follow_ups += 1
+            log_voice("คุยต่อโดยไม่ต้องเรียกชื่อ")
+
+    def respond(self, heard: Heard, wake_heard: str) -> bytes | None:
+        log_voice(f"คำสั่ง: {heard.command}" + (f" (base: {heard.alternatives[0]})" if heard.alternatives else ""))
+        intent, reply = answer(self.ctx, heard.command, heard.alternatives)
         log_voice(f"intent: {intent}")
-        self.dataset.save(utterance, wake=wake_heard, transcript=full_text, command=command_text,
-                          base=base_text, intent=intent, reply=self.render(reply))
-        self.say(reply)
+        skill = BY_INTENT.get(intent)
+        self._spoken = []
+        barge = self.say(reply, filler=bool(skill and skill.slow))
+        said = " ".join(self._spoken)
+        self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command=heard.command,
+                          base=heard.base, intent=intent, reply=said, interrupted=barge is not None)
+        self.ctx.history.append((heard.command, said))
+        del self.ctx.history[:-HISTORY_TURNS]
+        self.last_turn_at = time.monotonic()
+        return barge
 
 
 def listen(host: str, port: int, audio_device: str, config: Config) -> int:

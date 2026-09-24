@@ -36,6 +36,8 @@ class Config:
     f5_ref_audio: Path = ROOT / ".models" / "f5" / "reference.wav"
     f5_step: int = 16
     gender: str = "female"
+    barge_in: bool = True
+    follow_up_seconds: float = 5.0
     weather_lat: float = 13.7563
     weather_lon: float = 100.5018
     dataset_dir: Path | None = ROOT / "work" / "dataset"
@@ -60,7 +62,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
     stt, llm, tts = data.get("stt", {}), data.get("llm", {}), data.get("tts", {})
     weather, dataset = data.get("weather", {}), data.get("dataset", {})
     run, dashboard = data.get("run", {}), data.get("dashboard", {})
-    f5, persona = tts.get("f5", {}), data.get("persona", {})
+    f5, persona, voice = tts.get("f5", {}), data.get("persona", {}), data.get("voice", {})
     default = Config()
     dataset_dir = ROOT / dataset["dir"] if "dir" in dataset else default.dataset_dir
     return Config(
@@ -79,6 +81,8 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
         f5_ref_audio=ROOT / f5["ref_audio"] if "ref_audio" in f5 else default.f5_ref_audio,
         f5_step=int(f5.get("step", default.f5_step)),
         gender=str(persona.get("gender", default.gender)),
+        barge_in=bool(voice.get("barge_in", default.barge_in)),
+        follow_up_seconds=float(voice.get("follow_up_seconds", default.follow_up_seconds)),
         weather_lat=float(weather.get("lat", default.weather_lat)),
         weather_lon=float(weather.get("lon", default.weather_lon)),
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,

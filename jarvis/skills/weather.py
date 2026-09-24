@@ -36,4 +36,4 @@ def _answer(ctx: Context, _text: str) -> str:
     return text + " ค่ะ"
 
 
-SKILLS = (Skill(intent="weather", description="ถามสภาพอากาศ ฝน อุณหภูมิข้างนอก", handle=_answer),)
+SKILLS = (Skill(intent="weather", description="ถามสภาพอากาศ ฝน อุณหภูมิข้างนอก", handle=_answer, slow=True),)

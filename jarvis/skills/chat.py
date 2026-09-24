@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import re
 
-from ..llm import complete
+from collections.abc import Iterator
+
+from ..llm import complete, stream
 from ..persona import particle, pronoun
 from .base import Context, Skill
 
 MAX_REPLY_CHARS = 110
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|(?<=ครับ)\s+|(?<=ค่ะ)\s+|(?<=คะ)\s+")
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|(?<=ครับ)\s+|(?<=ค่ะ)\s+|(?<=คะ)\s+|\n+")
+STREAM_REPLY_CHARS = 140
+FIRST_CHUNK_CHARS = 30
+RUN_ON_CHARS = 60
+HISTORY_TURNS = 3
 
 CHAT_SYSTEM = (
     "คุณคือ JARVIS ผู้ช่วยเสียงพูดภาษาไทย {gender} แทนตัวเองว่า {pronoun} ลงท้ายด้วย {particle} ตอบสั้น กระชับ เป็นกันเอง "
@@ -63,12 +70,57 @@ def shorten(text: str, gender: str, limit: int = MAX_REPLY_CHARS) -> str:
     return reply
 
 
+def speakable(text: str) -> str:
+    """Qwen sometimes answers in markdown ("**สลัด**:", "1."), which TTS would read out."""
+    text = re.sub(r"[*#`_>|]+", "", text)
+    text = re.sub(r"[\u3040-\u30ff\u3400-\u9fff]+", "", text)  # Qwen2 slips Chinese into Thai
+    text = re.sub(r"(?m)^\s*(?:\d+[.)]|[-•])\s+", "", text)
+    return " ".join(text.replace(":", " ").split())
+
+
+def _messages(ctx: Context, text: str) -> list[dict]:
+    messages = [{"role": "system", "content": _system(ctx) + _profile_context(ctx)}]
+    for said, replied in ctx.history[-HISTORY_TURNS:]:
+        messages += [{"role": "user", "content": said}, {"role": "assistant", "content": replied}]
+    return messages + [{"role": "user", "content": text}]
+
+
 def _answer(ctx: Context, text: str) -> str:
-    reply = complete(
-        [{"role": "system", "content": _system(ctx) + _profile_context(ctx)}, {"role": "user", "content": text}],
-        ctx.config.llm_endpoint, temperature=0.7, max_tokens=160, timeout=60,
-    ).strip()
-    return shorten(reply, ctx.config.gender)
+    reply = complete(_messages(ctx, text), ctx.config.llm_endpoint, temperature=0.7, max_tokens=160, timeout=60)
+    return shorten(speakable(reply), ctx.config.gender)
 
 
-SKILLS = (Skill(intent="chat", description="คำถามหรือบทสนทนาทั่วไปที่ไม่ใช่การสั่งอุปกรณ์", handle=_answer),)
+def _stream(ctx: Context, text: str) -> Iterator[str]:
+    """Yields whole sentences as Qwen writes them, up to STREAM_REPLY_CHARS in total."""
+    pieces = stream(_messages(ctx, text), ctx.config.llm_endpoint, temperature=0.7, max_tokens=200, timeout=60)
+    buffer, spoken = "", 0
+    try:
+        for piece in pieces:
+            buffer += piece
+            while True:
+                match = _SENTENCE_BREAK.search(buffer)
+                if match:
+                    sentence, buffer = buffer[: match.start()], buffer[match.end():]
+                elif len(buffer) > (FIRST_CHUNK_CHARS if spoken == 0 else RUN_ON_CHARS) and buffer.rfind(" ") >= 10:
+                    # No sentence end yet: speak up to a phrase break so audio can start early.
+                    cut = buffer.rindex(" ")
+                    sentence, buffer = buffer[:cut], buffer[cut + 1:]
+                else:
+                    break
+                sentence = speakable(sentence)
+                if not sentence:
+                    continue
+                spoken += len(sentence)
+                if spoken >= STREAM_REPLY_CHARS:
+                    yield shorten(sentence, ctx.config.gender, limit=len(sentence))  # ensure it ends politely
+                    return
+                yield sentence
+        tail = speakable(buffer)
+        if tail:
+            yield shorten(tail, ctx.config.gender, limit=len(tail))
+    finally:
+        pieces.close()  # stop generating once enough was said
+
+
+SKILLS = (Skill(intent="chat", description="คำถามหรือบทสนทนาทั่วไปที่ไม่ใช่การสั่งอุปกรณ์", handle=_answer,
+                slow=True, stream=_stream),)
