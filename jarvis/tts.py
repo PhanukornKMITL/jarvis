@@ -48,6 +48,39 @@ def thai_integer(n: int) -> str:
     return words
 
 
+# Dotted Thai abbreviations F5-TTS reads letter by letter. Longest first so "ม.ค." wins over "ม.".
+_ABBREVIATIONS = sorted({
+    "พ.ศ.": "พุทธศักราช", "ค.ศ.": "คริสต์ศักราช",
+    "ม.ค.": "มกราคม", "ก.พ.": "กุมภาพันธ์", "มี.ค.": "มีนาคม", "เม.ย.": "เมษายน",
+    "พ.ค.": "พฤษภาคม", "มิ.ย.": "มิถุนายน", "ก.ค.": "กรกฎาคม", "ส.ค.": "สิงหาคม",
+    "ก.ย.": "กันยายน", "ต.ค.": "ตุลาคม", "พ.ย.": "พฤศจิกายน", "ธ.ค.": "ธันวาคม",
+    "ก.ม.": "กิโลเมตร", "กม.": "กิโลเมตร", "ซม.": "เซนติเมตร", "มม.": "มิลลิเมตร",
+    "กก.": "กิโลกรัม", "ชม.": "ชั่วโมง", "นศ.": "นักศึกษา", "รพ.": "โรงพยาบาล",
+    "ร.พ.": "โรงพยาบาล", "ร.ร.": "โรงเรียน", "จ.": "จังหวัด", "อ.": "อำเภอ", "ต.": "ตำบล",
+    "ถ.": "ถนน", "ดร.": "ด็อกเตอร์", "น.": "นาฬิกา", "ฯลฯ": "และอื่นๆ",
+}.items(), key=lambda item: -len(item[0]))
+# Only at the start of a word: otherwise "ผลิต." (a sentence-final full stop) became "ผลิ ตำบล".
+_ABBREVIATION_PATTERNS = [(re.compile(r"(?<![ก-๙])" + re.escape(short)), full) for short, full in _ABBREVIATIONS]
+# "21.10 น." / "08:30 น." is a time, not the decimal 21.10.
+_CLOCK = re.compile(r"(\d{1,2})[.:](\d{2})(?:\s*น\.)?(?=\s|$|[^\d])")
+
+
+def expand_abbreviations(text: str) -> str:
+    def clock(match: re.Match) -> str:
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if hour > 24 or minute > 59 or not (match.group(0).endswith("น.") or ":" in match.group(0)):
+            return match.group(0)
+        return f"{hour} นาฬิกา" + (f" {minute} นาที" if minute else "")
+
+    text = _CLOCK.sub(clock, text)
+    for pattern, full in _ABBREVIATION_PATTERNS:
+        text = pattern.sub(f" {full} ", text)
+    # F5's reader takes "รร" as the vowel of กรรม, so "ควรรดน้ำ" came out as "ควร.อดน้ำ".
+    # Nothing is spelled "ควรร…" inside one word, so a gap after ควร is always right.
+    text = re.sub(r"ควร(?=ร)", "ควร ", text)
+    return text.replace("ฯ", "")  # ไปยาลน้อย (กรุงเทพฯ) is silent
+
+
 def spell_numbers(text: str) -> str:
     """Writes numbers as Thai words for TTS: F5-TTS Thai read "31.5" as "สามร้อยสิบห้า"."""
     def spell(match: re.Match) -> str:
@@ -112,7 +145,7 @@ class Speaker:
     def speak(self, parts: Iterable[str], stop: threading.Event | None = None) -> float:
         """Speaks each part in order; returns seconds spent. Setting `stop` cuts it off."""
         stop = stop or threading.Event()
-        parts = (spell_numbers(part) for part in parts)
+        parts = (spell_numbers(expand_abbreviations(part)) for part in parts)
         self.unspoken = []
         start = time.monotonic()
         if self.f5_port and _player():
