@@ -66,11 +66,15 @@ class Speaker:
     def __init__(self, voice: str = "Kanya", f5_port: int | None = None) -> None:
         self.voice = voice
         self.f5_port = f5_port
+        self.unspoken: list[str] = []
+        """After a stopped speak(): the cut-off part and the parts already pulled but not played,
+        in order. Parts still inside the caller's iterator were never taken."""
 
     def speak(self, parts: Iterable[str], stop: threading.Event | None = None) -> float:
         """Speaks each part in order; returns seconds spent. Setting `stop` cuts it off."""
         stop = stop or threading.Event()
         parts = iter(parts)
+        self.unspoken = []
         start = time.monotonic()
         if self.f5_port and _player():
             unspoken = self._speak_f5(parts, stop)
@@ -88,15 +92,21 @@ class Speaker:
         ready: queue.Queue[tuple[str, bytes] | None] = queue.Queue(maxsize=2)
         failed: list[str] = []
 
+        pulled_after_stop: list[str] = []
+
         def produce() -> None:
             try:
                 for text in parts:  # may pull from a live LLM stream
                     if stop.is_set():
+                        pulled_after_stop.append(text)
                         return
                     try:
                         audio = synthesize_f5(text, self.f5_port)
                     except OSError:
                         failed.append(text)
+                        return
+                    if stop.is_set():
+                        pulled_after_stop.append(text)
                         return
                     ready.put((text, audio))
             finally:
@@ -105,9 +115,10 @@ class Speaker:
         producer = threading.Thread(target=produce, daemon=True)
         producer.start()
         while (item := ready.get()) is not None:
-            if stop.is_set():
-                continue
             text, audio = item
+            if stop.is_set():
+                self.unspoken.append(text)
+                continue
             print(f"JARVIS: {text}", flush=True)
             handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             try:
@@ -116,7 +127,10 @@ class Speaker:
                 _run_until_stopped([*player, handle.name], stop)
             finally:
                 Path(handle.name).unlink(missing_ok=True)
+            if stop.is_set():
+                self.unspoken.append(text)  # cut off mid-sentence: resume from its start
         producer.join()
+        self.unspoken += pulled_after_stop
         return failed or None
 
     def _speak_basic(self, parts: Iterable[str], stop: threading.Event) -> None:
@@ -129,9 +143,13 @@ class Speaker:
         say = shutil.which("say")
         for text in parts:
             if stop.is_set() or not say:
+                self.unspoken.append(text)
                 return
             print(f"JARVIS: {text}", flush=True)
             _run_until_stopped([say, "-v", self.voice, text], stop)
+            if stop.is_set():
+                self.unspoken.append(text)
+                return
 
 
 def speak(text: str, voice: str = "Kanya", f5_port: int | None = None) -> float:

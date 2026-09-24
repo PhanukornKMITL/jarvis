@@ -13,6 +13,7 @@ import itertools
 import json
 import platform
 import random
+import re
 import shutil
 import sys
 import threading
@@ -41,7 +42,13 @@ UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอี�
 NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ"
 ERROR_REPLY = "ติดต่อ JARVIS หรือ Qwen ไม่ได้ค่ะ"
 FILLERS = ("อืม ขอคิดแป๊บนึงนะคะ", "อืม สักครู่นะคะ", "ได้ค่ะ ขอเช็คแป๊บนึงนะคะ")
-WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS)
+RESUME_REPLY = "ขอตอบเรื่องเมื่อกี้ให้จบก่อนนะคะ"
+STOPPED_REPLY = "ได้ค่ะ"
+WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS, RESUME_REPLY, STOPPED_REPLY)
+# Interrupting with only one of these drops the rest of the answer instead of resuming it.
+# Matched against normalize()d text (tone marks removed) and must be the whole command,
+# so a question like "พอจะมีร้านแนะนำไหม" is not taken as "พอ".
+_STOP_WORDS = re.compile(r"(?:หยุด|พอแลว|พอ|เงียบ|ไมตองแลว|ไมตอง|ชางมัน|ยกเลิก|stop)(?:กอน|นะ|ครับ|คะ|เลย|ที|แลว|เถอะ|เถอ)*")
 
 # Short polls while waiting for the wake word so "Jarvis" is noticed quickly.
 WAKE_STEP_SECONDS = 2
@@ -167,16 +174,22 @@ class VoiceSession:
         self._carry = b""
         self.last_score: float | None = None
 
-    def is_owner(self, pcm: bytes, what: str) -> bool:
-        """Speaker check; allows everything when disabled or when the service is unavailable."""
+    def is_owner(self, pcm: bytes, what: str, in_conversation: bool = False) -> bool:
+        """Speaker check; allows everything when disabled or when the service is unavailable.
+
+        Inside a conversation the owner was already verified at the wake word, and short
+        casual follow-ups score lower (0.24 for a real one), so a looser threshold applies."""
         self.last_score = None
         if not self.config.speaker_check:
             return True
         score = speaker_score(pcm, self.config.f5_port)
         self.last_score = score
-        if score is None or score >= self.config.speaker_threshold:
+        threshold = self.config.speaker_follow_up_threshold if in_conversation else self.config.speaker_threshold
+        if score is None or score >= threshold:
             return True
-        log_voice(f"ไม่ใช่เสียงเจ้าของ ไม่รับ{what} (score={score:.2f} < {self.config.speaker_threshold:.2f})")
+        log_voice(f"ไม่ใช่เสียงเจ้าของ ไม่รับ{what} (score={score:.2f} < {threshold:.2f})")
+        # Kept (marked) so thresholds can be tuned from real rejections later.
+        self.dataset.save(pcm, rejected=what, speaker_score=score, intent=None)
         return False
 
     def capture(self, initial: bytes, wait_seconds: float) -> tuple[bytes, bool]:
@@ -204,14 +217,18 @@ class VoiceSession:
             self._spoken.append(text)
             yield text
 
-    def say(self, reply: str | Iterable[str], filler: bool = False) -> bytes | None:
-        """Speaks a reply. Returns the user's audio if they spoke over JARVIS (barge-in)."""
-        parts: Iterator[str] = self._rendered(reply)
-        if filler:
-            parts = itertools.chain([self.render(random.choice(FILLERS), with_name=False)], parts)
+    def say(self, reply: str | Iterable[str], filler: bool = False, rendered: bool = False,
+            prefix: str | None = None) -> tuple[bytes | None, list[str]]:
+        """Speaks a reply. Returns (the user's audio if they spoke over JARVIS, the parts of
+        the reply that were not said). `rendered` parts already have the persona applied."""
+        parts: Iterator[str] = iter(reply) if rendered else self._rendered(reply)
+        lead = [self.render(random.choice(FILLERS), with_name=False)] if filler else []
+        if prefix:
+            lead.append(self.render(prefix, with_name=False))
+        parts = itertools.chain(lead, parts)
         if not self.config.barge_in:
             self.mic.drain(self.speaker.speak(parts))
-            return None
+            return None, []
         # Audio buffered while JARVIS was thinking must not be mistaken for barge-in.
         self.mic.drain(30)
         self._carry = b""
@@ -227,7 +244,11 @@ class VoiceSession:
         talker.start()
         barge = self._watch_for_barge_in(done, stop)
         talker.join()
-        return barge
+        if barge is None:
+            return None, []
+        skip = {self.render(text, with_name=False) for text in (*FILLERS, RESUME_REPLY)}
+        unspoken = [text for text in itertools.chain(self.speaker.unspoken, parts) if text not in skip]
+        return barge, unspoken
 
     def _watch_for_barge_in(self, done: threading.Event, stop: threading.Event) -> bytes | None:
         chunk_bytes = int(BARGE_CHUNK_SECONDS * SAMPLE_RATE) * 2
@@ -244,6 +265,7 @@ class VoiceSession:
                     loud = gap = 0
             if loud >= BARGE_CHUNKS:
                 audio = b"".join(recent)
+                # Strict threshold here: JARVIS's own echo scored up to 0.28, above the follow-up one.
                 if not self.is_owner(audio, "การพูดแทรก"):
                     recent.clear()
                     loud = gap = 0  # e.g. JARVIS's own voice leaking into the mic: keep talking
@@ -261,7 +283,7 @@ class VoiceSession:
         """Pre-generates the fixed replies so they play instantly instead of after synthesis."""
         if not self.f5_port:
             return
-        texts = [self.render(t) for t in WARM_PHRASES[:5]] + [self.render(t, with_name=False) for t in FILLERS]
+        texts = [self.render(t) for t in WARM_PHRASES[:5]] + [self.render(t, with_name=False) for t in WARM_PHRASES[5:]]
         for text in texts:
             try:
                 synthesize_f5(text, self.f5_port, timeout=120)
@@ -324,7 +346,7 @@ class VoiceSession:
         if not heard.command:
             follow, got = self.mic.capture(b"", AFTER_WAKE_GRACE_SECONDS)
             if not got:
-                barge = self.say(READY_REPLY)
+                barge, _ = self.say(READY_REPLY)
                 follow, got = self.capture(barge or b"", 0 if barge else LISTEN_TIMEOUT_SECONDS)
             if got:
                 heard = self.hear(follow, need_wake=False) or heard
@@ -336,22 +358,44 @@ class VoiceSession:
         self.converse(heard, wake_heard)
 
     def converse(self, heard: Heard, wake_heard: str) -> None:
-        """Answers, then keeps listening for follow-ups (or interruptions) without the wake word."""
+        """Answers, then keeps listening for follow-ups without the wake word. A question
+        asked over an answer is queued: JARVIS finishes the old answer first, then answers
+        it (unless the interruption was "หยุด"/"พอแล้ว", which drops the rest)."""
         if time.monotonic() - self.last_turn_at > HISTORY_EXPIRES_SECONDS:
             self.ctx.history.clear()
+        pending: deque[Heard] = deque([heard])
+        leftover: list[str] = []
         follow_ups = 0
         while True:
-            barge = self.respond(heard, wake_heard)
-            if barge is not None:
+            while pending or leftover:
+                if leftover:
+                    barge, leftover = self.say(leftover, rendered=True, prefix=RESUME_REPLY)
+                else:
+                    barge, leftover = self.respond(pending.popleft(), wake_heard)
+                    wake_heard = ""
+                if barge is None:
+                    continue
                 pcm, _ = self.capture(barge, 0)
-            else:
-                if follow_ups >= MAX_FOLLOW_UPS:
-                    return
-                pcm, got = self.capture(b"", self.config.follow_up_seconds)
-                if not got:
-                    log_voice("จบบทสนทนา กลับไปรอคำว่า Jarvis")
-                    return
-            if not self.is_owner(pcm, "คำถามต่อ"):
+                interruption = self.hear(pcm, need_wake=False) if self.is_owner(pcm, "การพูดแทรก") else None
+                if interruption is None or not interruption.command:
+                    continue  # nothing usable was said: resume the answer
+                if is_echo(interruption.command, " ".join(self._spoken)):
+                    log_voice(f"พูดแทรกเป็นเสียงตัวเอง พูดต่อ: {interruption.command}")
+                    continue
+                if _STOP_WORDS.fullmatch(normalize(interruption.command)):
+                    log_voice(f"สั่งหยุด: {interruption.command}")
+                    leftover = []
+                    self.say(STOPPED_REPLY)
+                    continue
+                log_voice(f"จำคำถามใหม่ไว้ ตอบเรื่องเดิมให้จบก่อน: {interruption.command}")
+                pending.append(interruption)
+            if follow_ups >= MAX_FOLLOW_UPS:
+                return
+            pcm, got = self.capture(b"", self.config.follow_up_seconds)
+            if not got:
+                log_voice("จบบทสนทนา กลับไปรอคำว่า Jarvis")
+                return
+            if not self.is_owner(pcm, "คำถามต่อ", in_conversation=True):
                 return
             next_heard = self.hear(pcm, need_wake=False)
             if next_heard is None or not next_heard.command:
@@ -361,17 +405,17 @@ class VoiceSession:
                 # JARVIS heard itself ("ต้นไม้ความชืด" right after its garden reply): answering it loops.
                 log_voice(f"ได้ยินเสียงตัวเอง ไม่ตอบ: {next_heard.command}")
                 return
-            heard, wake_heard = next_heard, ""
+            pending.append(next_heard)
             follow_ups += 1
             log_voice("คุยต่อโดยไม่ต้องเรียกชื่อ")
 
-    def respond(self, heard: Heard, wake_heard: str) -> bytes | None:
+    def respond(self, heard: Heard, wake_heard: str) -> tuple[bytes | None, list[str]]:
         log_voice(f"คำสั่ง: {heard.command}" + (f" (base: {heard.alternatives[0]})" if heard.alternatives else ""))
         intent, reply = answer(self.ctx, heard.command, heard.alternatives)
         log_voice(f"intent: {intent}")
         skill = BY_INTENT.get(intent)
         self._spoken = []
-        barge = self.say(reply, filler=bool(skill and skill.slow))
+        barge, unspoken = self.say(reply, filler=bool(skill and skill.slow))
         said = " ".join(self._spoken)
         self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command=heard.command,
                           base=heard.base, intent=intent, reply=said, interrupted=barge is not None,
@@ -379,7 +423,7 @@ class VoiceSession:
         self.ctx.history.append((heard.command, said))
         del self.ctx.history[:-HISTORY_TURNS]
         self.last_turn_at = time.monotonic()
-        return barge
+        return barge, unspoken
 
 
 def listen(host: str, port: int, audio_device: str, config: Config) -> int:

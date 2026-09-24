@@ -20,6 +20,7 @@ from .config import ROOT, load_config
 MODEL_DIR = ROOT / ".models" / "spkrec"
 VOICEPRINT = MODEL_DIR / "voiceprint.npy"
 SAMPLE_RATE = 16_000
+FOLLOW_UP_ENROLL_SCORE = 0.35
 
 
 class SpeakerVerifier:
@@ -58,10 +59,10 @@ def _read_pcm(path: str) -> bytes:
 
 
 def enroll() -> None:
-    """Builds the voiceprint from dataset commands that began with the wake word.
+    """Builds the voiceprint from wake-word commands plus follow-ups that clearly passed.
 
-    Follow-ups are left out: during the self-hearing loop some of them were JARVIS's own
-    voice (they scored 0.12-0.28 against the owner, while wake-word commands had median 0.56).
+    Other follow-ups are left out: during the self-hearing loop some were JARVIS's own voice
+    (they scored 0.12-0.28 against the owner, while wake-word commands had median 0.56).
     """
     import numpy as np
 
@@ -69,7 +70,9 @@ def enroll() -> None:
     if config.dataset_dir is None or not (config.dataset_dir / "index.jsonl").is_file():
         raise SystemExit("ไม่มี dataset ให้ลงทะเบียนเสียง ลองสั่งงานด้วยเสียงสักพักก่อน")
     rows = [json.loads(line) for line in (config.dataset_dir / "index.jsonl").open(encoding="utf-8")]
-    clips = [str(config.dataset_dir / row["audio"]) for row in rows if row.get("wake")]
+    # Wake-word commands, plus follow-ups that clearly passed the check (more speaking styles).
+    clips = [str(config.dataset_dir / row["audio"]) for row in rows
+             if not row.get("rejected") and (row.get("wake") or (row.get("speaker_score") or 0) >= FOLLOW_UP_ENROLL_SCORE)]
     if len(clips) < 5:
         raise SystemExit(f"มีคำสั่งที่เรียกชื่อแค่ {len(clips)} ครั้ง ต้องมีอย่างน้อย 5")
     verifier = SpeakerVerifier()

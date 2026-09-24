@@ -48,6 +48,9 @@ speaker_check = true
 # Cosine similarity to the owner's voiceprint. Owner's commands: median 0.56;
 # JARVIS's own voice: max 0.18; echo during the self-hearing loop: 0.12-0.28.
 speaker_threshold = 0.30
+# Looser after the owner already passed at the wake word: short casual follow-ups score
+# lower (a real one scored 0.24). Echo is also caught by comparing with JARVIS's last words.
+speaker_follow_up_threshold = 0.20
 
 [persona]
 # "male" → replies end with ครับ, "female" → ค่ะ. Match the TTS voice.
