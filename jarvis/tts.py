@@ -22,6 +22,45 @@ PIPER_MODEL = Path(__file__).resolve().parent.parent / ".models" / "piper" / "th
 _POLL_SECONDS = 0.05
 
 
+_DIGITS = ("ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า")
+_PLACES = ("", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน")
+_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+
+
+def thai_integer(n: int) -> str:
+    if n == 0:
+        return "ศูนย์"
+    if n >= 1_000_000:
+        rest = n % 1_000_000
+        return thai_integer(n // 1_000_000) + "ล้าน" + (thai_integer(rest) if rest else "")
+    digits = str(n)
+    words = ""
+    for index, char in enumerate(digits):
+        digit, place = int(char), len(digits) - index - 1
+        if digit == 0:
+            continue
+        if place == 1:
+            words += {1: "", 2: "ยี่"}.get(digit, _DIGITS[digit]) + "สิบ"
+        elif place == 0 and digit == 1 and len(digits) > 1:
+            words += "เอ็ด"
+        else:
+            words += _DIGITS[digit] + _PLACES[place]
+    return words
+
+
+def spell_numbers(text: str) -> str:
+    """Writes numbers as Thai words for TTS: F5-TTS Thai read "31.5" as "สามร้อยสิบห้า"."""
+    def spell(match: re.Match) -> str:
+        whole, _, fraction = match.group().replace(",", "").partition(".")
+        words = thai_integer(int(whole))
+        if fraction:
+            words += "จุด" + "".join(_DIGITS[int(d)] for d in fraction)
+        return f" {words} "
+
+    text = _NUMBER.sub(spell, text).replace("%", " เปอร์เซ็นต์")
+    return " ".join(text.split())
+
+
 def split_sentences(text: str, min_chars: int = 20) -> list[str]:
     """Thai has no full stops, so split after ครับ/ค่ะ/นะคะ and punctuation; merge tiny pieces."""
     pieces = [p for p in re.split(r"(?<=[.!?])\s+|(?<=ครับ)\s+|(?<=ค่ะ)\s+|(?<=คะ)\s+", text.strip()) if p]
@@ -73,7 +112,7 @@ class Speaker:
     def speak(self, parts: Iterable[str], stop: threading.Event | None = None) -> float:
         """Speaks each part in order; returns seconds spent. Setting `stop` cuts it off."""
         stop = stop or threading.Event()
-        parts = iter(parts)
+        parts = (spell_numbers(part) for part in parts)
         self.unspoken = []
         start = time.monotonic()
         if self.f5_port and _player():
