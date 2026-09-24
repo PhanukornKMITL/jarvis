@@ -61,8 +61,9 @@ def classify(transcript: str, endpoint: str, alternatives: tuple[str, ...] = ())
     if skill is None:
         intent = FALLBACK
     elif skill.rule_only:
-        # No rule matched, so the LLM choosing an action like switching a light is a guess.
-        return UNCLEAR
+        # No rule matched, so the LLM choosing an action like switching a light is a guess:
+        # ask again if the topic was mentioned, otherwise it was just chat ("ขึ้นมาใช่ไหม").
+        return UNCLEAR if skill.mentions and skill.mentions(transcript) else FALLBACK
     if intent == FALLBACK and any(s.mentions and s.mentions(transcript) for s in SKILLS):
         # A garbled command ("บริฟัยให้น้อย") would otherwise get a rambling chat reply.
         return UNCLEAR

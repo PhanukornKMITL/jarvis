@@ -42,9 +42,8 @@ UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอี�
 NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ"
 ERROR_REPLY = "ติดต่อ JARVIS หรือ Qwen ไม่ได้ค่ะ"
 FILLERS = ("อืม ขอคิดแป๊บนึงนะคะ", "อืม สักครู่นะคะ", "ได้ค่ะ ขอเช็คแป๊บนึงนะคะ")
-RESUME_REPLY = "ขอตอบเรื่องเมื่อกี้ให้จบก่อนนะคะ"
 STOPPED_REPLY = "ได้ค่ะ"
-WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS, RESUME_REPLY, STOPPED_REPLY)
+WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS, STOPPED_REPLY)
 # Interrupting with only one of these drops the rest of the answer instead of resuming it.
 # Matched against normalize()d text (tone marks removed) and must be the whole command,
 # so a question like "พอจะมีร้านแนะนำไหม" is not taken as "พอ".
@@ -259,7 +258,7 @@ class VoiceSession:
         talker.join()
         if barge is None:
             return None, []
-        skip = {self.render(text, with_name=False) for text in (*FILLERS, RESUME_REPLY)}
+        skip = {self.render(text, with_name=False) for text in FILLERS}
         unspoken = [text for text in itertools.chain(self.speaker.unspoken, parts) if text not in skip]
         return barge, unspoken
 
@@ -371,36 +370,31 @@ class VoiceSession:
         self.converse(heard, wake_heard)
 
     def converse(self, heard: Heard, wake_heard: str) -> None:
-        """Answers, then keeps listening for follow-ups without the wake word. A question
-        asked over an answer is queued: JARVIS finishes the old answer first, then answers
-        it (unless the interruption was "หยุด"/"พอแล้ว", which drops the rest)."""
+        """Answers, then keeps listening for follow-ups without the wake word. Speaking over
+        an answer drops the rest of it and answers the new question instead ("หยุด"/"พอแล้ว"
+        alone just stops)."""
         if time.monotonic() - self.last_turn_at > HISTORY_EXPIRES_SECONDS:
             self.ctx.history.clear()
         pending: deque[Heard] = deque([heard])
-        leftover: list[str] = []
         follow_ups = 0
         while True:
-            while pending or leftover:
-                if leftover:
-                    barge, leftover = self.say(leftover, rendered=True, prefix=RESUME_REPLY)
-                else:
-                    barge, leftover = self.respond(pending.popleft(), wake_heard)
-                    wake_heard = ""
+            while pending:
+                barge, _ = self.respond(pending.popleft(), wake_heard)
+                wake_heard = ""
                 if barge is None:
                     continue
                 pcm, _ = self.capture(barge, 0)
                 interruption = self.hear(pcm, need_wake=False) if self.is_owner(pcm, "การพูดแทรก") else None
                 if interruption is None or not interruption.command:
-                    continue  # nothing usable was said: resume the answer
+                    continue  # nothing usable was said
                 if is_echo(interruption.command, " ".join(self._spoken)) and not self._clearly_owner():
                     log_voice(f"พูดแทรกเป็นเสียงตัวเอง พูดต่อ: {interruption.command}")
                     continue
                 if _STOP_WORDS.fullmatch(normalize(interruption.command)):
                     log_voice(f"สั่งหยุด: {interruption.command}")
-                    leftover = []
                     self.say(STOPPED_REPLY)
                     continue
-                log_voice(f"จำคำถามใหม่ไว้ ตอบเรื่องเดิมให้จบก่อน: {interruption.command}")
+                log_voice(f"เปลี่ยนไปตอบคำถามใหม่: {interruption.command}")
                 pending.append(interruption)
             if follow_ups >= MAX_FOLLOW_UPS:
                 return
