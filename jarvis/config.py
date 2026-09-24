@@ -16,7 +16,14 @@ class Profile:
     name: str = ""
     birth_date: str = ""
     birth_time: str = ""
+    birth_place: str = ""
     diet: str = ""
+    about: str = ""
+    interests: tuple[str, ...] = ()
+    personality: str = ""
+    """How JARVIS should come across ([jarvis] personality)."""
+    rules: tuple[str, ...] = ()
+    """Behaviour rules for conversation ([jarvis] rules)."""
 
 
 @dataclass(frozen=True)
@@ -52,12 +59,18 @@ class Config:
 def load_profile(path: Path = PROFILE_PATH) -> Profile:
     if not path.is_file():
         return Profile()
-    data = tomllib.loads(path.read_text(encoding="utf-8")).get("profile", {})
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    data, jarvis = raw.get("profile", {}), raw.get("jarvis", {})
     return Profile(
         name=str(data.get("name", "")),
         birth_date=str(data.get("birth_date", "")),
         birth_time=str(data.get("birth_time", "")),
+        birth_place=str(data.get("birth_place", "")),
         diet=str(data.get("diet", "")),
+        about=str(data.get("about", "")),
+        interests=tuple(str(item) for item in data.get("interests", ())),
+        personality=str(jarvis.get("personality", "")),
+        rules=tuple(str(item) for item in jarvis.get("rules", ())),
     )
 
 

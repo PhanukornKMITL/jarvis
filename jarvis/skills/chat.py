@@ -41,11 +41,25 @@ def _profile_context(ctx: Context) -> str:
         facts.append(f"วันเกิดของผู้ใช้คือ {profile.birth_date}")
     if profile.birth_time:
         facts.append(f"เวลาเกิดของผู้ใช้คือ {profile.birth_time} น.")
+    if profile.birth_place:
+        facts.append(f"เกิดที่ {profile.birth_place}")
     if profile.diet:
-        facts.append(f"ผู้ใช้กิน{profile.diet} หากแนะนำอาหารให้สอดคล้องกับข้อนี้")
-    if not facts:
-        return ""
-    return "\nข้อมูลผู้ใช้ที่บันทึกไว้: " + "; ".join(facts) + " ใช้ข้อมูลนี้เมื่อเกี่ยวข้องกับคำถาม และไม่เดาข้อมูลส่วนตัวอื่นเพิ่ม"
+        # Qwen suggested fish and fish sauce to a vegetarian when this only said "มังสวิรัติ".
+        facts.append(f"เรื่องอาหาร ผู้ใช้กิน{profile.diet} ถ้าแนะนำอาหารหรือสูตรอาหาร "
+                     "ต้องไม่มีวัตถุดิบหรือเครื่องปรุงที่ขัดกับข้อนี้เด็ดขาด ใช้ของแทน เช่น ซีอิ๊วแทนน้ำปลา เต้าหู้แทนเนื้อสัตว์")
+    if profile.about:
+        facts.append(profile.about)
+    if profile.interests:
+        facts.append("สนใจ " + ", ".join(profile.interests))
+    context = ""
+    if facts:
+        context += ("\nข้อมูลผู้ใช้ที่บันทึกไว้: " + "; ".join(facts)
+                    + " ใช้ข้อมูลนี้เมื่อเกี่ยวข้องกับคำถาม และไม่เดาข้อมูลส่วนตัวอื่นเพิ่ม")
+    if profile.personality:
+        context += f"\nบุคลิกของคุณ: {profile.personality}"
+    if profile.rules:
+        context += "\nกติกา: " + " ".join(f"({index}) {rule}" for index, rule in enumerate(profile.rules, 1))
+    return context
 
 
 def shorten(text: str, gender: str, limit: int = MAX_REPLY_CHARS) -> str:
