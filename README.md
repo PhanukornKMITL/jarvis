@@ -1,44 +1,40 @@
-# JARVIS prototype — network device discovery
+# JARVIS — local device and voice dashboard
 
-This first runnable step uses only the Mac and Python's standard library. JARVIS
-runs as a server process. A second process acts like an ESP32: it connects over
-TCP, announces its device ID and current state, then waits for actions. The CLI
-can list the connected device, read its state, and turn its simulated light on
-or off.
+JARVIS ใช้ Python standard library สำหรับ launcher และ dashboard โดยเปิดเซิร์ฟเวอร์
+อุปกรณ์จำลอง โมเดลภาษา และระบบเสียงจาก Terminal คำสั่งเสียงและปุ่มบนเว็บสั่งอุปกรณ์
+ผ่านเซิร์ฟเวอร์เดียวกัน
 
-## Run it
+## เริ่มใช้งาน
 
-Open three Terminal tabs from this directory and run:
+จาก root ของ repo รันคำสั่งเดียวใน Terminal:
+
+```sh
+python3 -m jarvis.run
+```
+
+เปิด `http://127.0.0.1:8766` เพื่อดูอุปกรณ์, สั่งเปิดปิดไฟ, ดูคำสั่งเสียง และจัดการ service
+แดชบอร์ดเปิดได้ทันทีระหว่างรอ LLM โหลด กด Ctrl+C เพื่อหยุด process ที่ launcher เปิดเอง
+ค่าเริ่มต้นรับการเชื่อมต่อเฉพาะเครื่องนี้ หากตั้ง `[dashboard] host` เป็น IP ของ LAN
+ให้ใช้เฉพาะเครือข่ายส่วนตัวที่ไว้ใจ เพราะยังไม่มีระบบล็อกอิน
+
+การรัน voice ต้องมี `llama-server`, `ffmpeg`, `whisper-cli` และไฟล์โมเดลตาม `config.toml`
+หากยังไม่พร้อม แดชบอร์ดจะแสดงสถานะ `missing` หรือ `stopped` พร้อมเหตุผล
+เอา `light` หรือ `garden` ออกจาก `[run] fake_devices` เมื่อใช้ฮาร์ดแวร์จริง
+
+ข้อมูลส่วนตัวสำหรับ JARVIS เก็บใน `profile.toml` ที่ root ของ repo ไฟล์นี้ถูก Git ignore
+และโหลดใหม่เมื่อเริ่ม voice ระบบใช้ข้อมูลนี้ตอบคำถามส่วนตัวและปรับคำแนะนำอาหาร
+
+## รันแยกทีละตัว (ดีบัก)
 
 ```sh
 python3 -m jarvis.server
-```
-
-Open `http://127.0.0.1:8766` for the live device dashboard. To accept ESP32
-connections and view the dashboard from other devices on your home network,
-bind the server to the LAN interface (for example `python -m jarvis.server
---host 0.0.0.0`) and use the computer's LAN IP from the ESP32. This prototype
-does not include authentication, so keep it on a trusted private network.
-
-## Control a real ESP32 LED
-
-The ready-to-upload Arduino sketch is at `esp32/jarvis_led/jarvis_led.ino`.
-Wire GPIO 25 to an LED anode through a 220–330 ohm resistor, and wire the LED
-cathode to GND. In the sketch, set `WIFI_SSID`, `WIFI_PASSWORD`, and
-`JARVIS_HOST` to the LAN IP of the computer running JARVIS. Start Core for LAN
-connections, then upload the sketch:
-
-```sh
-python -m jarvis.server --host 0.0.0.0
-```
-
-The ESP32 registers as `living_room_led` and appears in the dashboard. If
-Windows Firewall asks, allow Python on private networks; otherwise add an
-inbound TCP rule for port 8765.
-
-```sh
 python3 -m jarvis.fake_esp
+python3 -m jarvis.fake_esp --kind garden
+llama-server -m .models/qwen2-7b-instruct-q4_k_m.gguf --port 8080 -c 4096 -ngl 99
+python3 -m jarvis.cli voice
 ```
+
+แต่ละคำสั่งต้องเปิดใน Terminal คนละแท็บ คำสั่ง CLI ใช้เช็กได้ดังนี้:
 
 ```sh
 python3 -m jarvis.cli devices
@@ -47,7 +43,7 @@ python3 -m jarvis.cli light-on
 python3 -m jarvis.cli light-off
 ```
 
-Stop the fake ESP with Ctrl+C. It disappears from the connected-device list.
+หยุดอุปกรณ์จำลองด้วย Ctrl+C แล้วอุปกรณ์จะหายจากรายการที่เชื่อมต่อ
 
 ## Try local voice (macOS)
 
@@ -79,13 +75,6 @@ Local LLM (Qwen2-7B-Instruct, ~4.7 GB) for intents and free-form questions:
 curl -L -o .models/qwen2-7b-instruct-q4_k_m.gguf \
   https://huggingface.co/Qwen/Qwen2-7B-Instruct-GGUF/resolve/main/qwen2-7b-instruct-q4_k_m.gguf
 llama-server -m .models/qwen2-7b-instruct-q4_k_m.gguf --port 8080 -c 4096 -ngl 99
-```
-
-Then, each in its own Terminal tab: `python3 -m jarvis.server`,
-`python3 -m jarvis.fake_esp`, `python3 -m jarvis.fake_esp --kind garden`, and
-
-```sh
-python3 -m jarvis.cli voice
 ```
 
 Speak in one breath ("จาวิส ปิดไฟที", "เฮ้ จาวิส วันนี้ฝนจะตกไหม",
@@ -126,7 +115,9 @@ py -m jarvis.cli voice --audio-device "Microphone (USB Audio Device)"
 ```
 
 Windows uses DirectShow for recording and PowerShell's local SpeechSynthesizer
-for spoken replies. Keep the JARVIS server and fake ESP running first.
+for spoken replies. Run `py -m jarvis.run` for the other services. If your microphone
+name differs from the default, set `[run] autostart_voice = false` and run the
+voice command above separately.
 
 ## What this proves
 
@@ -140,11 +131,6 @@ the same Mac. Later, the server can bind to the Mac mini's LAN address and an
 ESP32 can connect over the home Wi-Fi. SQLite persistence and Wi-Fi access-point
 setup remain later steps.
 
-## Next increments
+## งานถัดไป
 
-1. Add a temperature fake device and a natural-language-independent status
-   command model.
-2. Improve local wake-word and short-utterance detection based on real mic tests.
-3. Add SQLite persistence and clearer online/offline timeouts.
-4. Move the server onto the Mac mini's home network, then replace the fake
-   device with an ESP32 when hardware is available.
+ดู `TODO.md` สำหรับการวัดผลจาก dataset, คำปลุกเฉพาะ, หลายอุปกรณ์ และฮาร์ดแวร์จริง

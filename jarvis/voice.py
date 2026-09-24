@@ -27,6 +27,11 @@ AFTER_WAKE_GRACE_SECONDS = 1.5
 LOG_PATH = Path(__file__).resolve().parent.parent / "work" / "voice_transcript.log"
 
 
+def personalize_reply(text: str, name: str) -> str:
+    name = name.strip()
+    return text if not name or name in text else f"{name}คะ {text}"
+
+
 def log_voice(message: str) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     line = f"{datetime.now().isoformat(timespec='seconds')} {message}"
@@ -70,7 +75,7 @@ class VoiceSession:
         self.dataset = Dataset(config.dataset_dir)
 
     def say(self, text: str) -> None:
-        self.mic.drain(speak(text, self.config.tts_voice))
+        self.mic.drain(speak(personalize_reply(text, self.config.profile.name), self.config.tts_voice))
 
     def run(self) -> None:
         overlap = b""

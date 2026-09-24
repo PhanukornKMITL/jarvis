@@ -12,6 +12,15 @@ command_model = ".models/ggml-thonburian-medium-q5_0.bin"
 [llm]
 # OpenAI-compatible chat endpoint (llama-server running Qwen).
 endpoint = "http://127.0.0.1:8080"
+model = ".models/qwen2-7b-instruct-q4_k_m.gguf"
+
+[run]
+fake_devices = ["light", "garden"] # Remove when using real ESP32 devices.
+autostart_voice = true
+
+[dashboard]
+host = "127.0.0.1"
+port = 8766
 
 [tts]
 # macOS `say` voice.

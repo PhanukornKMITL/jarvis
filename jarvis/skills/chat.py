@@ -12,9 +12,25 @@ CHAT_SYSTEM = (
 )
 
 
+def _profile_context(ctx: Context) -> str:
+    profile = ctx.config.profile
+    facts = []
+    if profile.name:
+        facts.append(f"ผู้ใช้ชื่อ {profile.name} ให้เรียกผู้ใช้ว่า {profile.name}")
+    if profile.birth_date:
+        facts.append(f"วันเกิดของผู้ใช้คือ {profile.birth_date}")
+    if profile.birth_time:
+        facts.append(f"เวลาเกิดของผู้ใช้คือ {profile.birth_time} น.")
+    if profile.diet:
+        facts.append(f"ผู้ใช้กิน{profile.diet} หากแนะนำอาหารให้สอดคล้องกับข้อนี้")
+    if not facts:
+        return ""
+    return "\nข้อมูลผู้ใช้ที่บันทึกไว้: " + "; ".join(facts) + " ใช้ข้อมูลนี้เมื่อเกี่ยวข้องกับคำถาม และไม่เดาข้อมูลส่วนตัวอื่นเพิ่ม"
+
+
 def _answer(ctx: Context, text: str) -> str:
     return complete(
-        [{"role": "system", "content": CHAT_SYSTEM}, {"role": "user", "content": text}],
+        [{"role": "system", "content": CHAT_SYSTEM + _profile_context(ctx)}, {"role": "user", "content": text}],
         ctx.config.llm_endpoint, temperature=0.7, max_tokens=120, timeout=60,
     ).strip()
 
