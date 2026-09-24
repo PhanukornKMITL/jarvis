@@ -41,9 +41,10 @@ ref_audio = ".models/f5/reference.wav"
 step = 16
 
 [voice]
-# Speaking while JARVIS talks cuts it off. Off by default: on the WH-CH520 the mic heard
-# JARVIS itself and it kept interrupting itself. Try true with a mic that doesn't.
-barge_in = false
+# Speaking while JARVIS talks cuts it off. The WH-CH520 mic hears JARVIS itself, so an
+# interruption must also pass the owner voice check (speaker_threshold); set false if
+# JARVIS still stops on its own voice.
+barge_in = true
 # After a reply, keep listening this long for a follow-up without saying "จาวิส" again.
 follow_up_seconds = 5
 # Only obey the enrolled owner's voice (also stops JARVIS answering its own echo).
