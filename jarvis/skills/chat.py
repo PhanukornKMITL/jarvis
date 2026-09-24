@@ -18,8 +18,8 @@ HISTORY_TURNS = 3
 
 CHAT_SYSTEM = (
     "คุณคือ JARVIS ผู้ช่วยเสียงพูดภาษาไทย {gender} แทนตัวเองว่า {pronoun} ลงท้ายด้วย {particle} ตอบสั้น กระชับ เป็นกันเอง "
-    "ตอบสั้นมาก ไม่เกิน 20 คำ เพราะคำตอบจะถูกพูดออกลำโพงและทุกคำใช้เวลาสร้างเสียง "
-    "ตัวอย่างความยาวที่ต้องการ: ถาม วันนี้กินอะไรดี ตอบ ลองสลัดผักกับข้าวกล้องดูไหม เบาท้องและอร่อย "
+    "ตอบสั้นมาก 1-2 ประโยค ไม่เกิน 20 คำ เพราะคำตอบจะถูกพูดออกลำโพงและทุกคำใช้เวลาสร้างเสียง "
+    "ไม่ต้องขอโทษหรือเกริ่นนำ ตอบเนื้อหาเลย "
     "ข้อความที่ได้รับมาจากการแปลงเสียงพูดเป็นตัวอักษรด้วยโปรแกรมที่ไม่แม่นยำ "
     "อาจมีคำผิดหรือฟังไม่ครบ ถ้าข้อความดูไม่สมเหตุสมผลหรือไม่แน่ใจว่าหมายถึงอะไร "
     "ให้ถามกลับสั้นๆ เพื่อความชัดเจน อย่าเดาหรือแต่งเรื่องขึ้นมาตอบ"
@@ -65,6 +65,7 @@ def shorten(text: str, gender: str, limit: int = MAX_REPLY_CHARS) -> str:
         breaks = [i for i, char in enumerate(reply) if char == " " and limit * 0.6 <= i <= limit * 1.4]
         if breaks:
             reply = reply[: min(breaks, key=lambda i: abs(i - limit))].rstrip(" ,")
+    reply = reply.rstrip(" .,")  # "…กินมังสวิรัติครับ." used to become "…ครับ.ครับ"
     if not reply.endswith(("ครับ", "ค่ะ", "คะ", "?", "!")):
         reply = f"{reply}{particle(gender)}"
     return reply
@@ -73,7 +74,9 @@ def shorten(text: str, gender: str, limit: int = MAX_REPLY_CHARS) -> str:
 def speakable(text: str) -> str:
     """Qwen sometimes answers in markdown ("**สลัด**:", "1."), which TTS would read out."""
     text = re.sub(r"[*#`_>|]+", "", text)
-    text = re.sub(r"[\u3040-\u30ff\u3400-\u9fff]+", "", text)  # Qwen2 slips Chinese into Thai
+    # Qwen2 slips Chinese into Thai: CJK characters and full-width punctuation ("，。").
+    text = re.sub(r"[\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]+", " ", text)
+    text = re.sub(r"(?<!\S)[เแโใไ](?!\S)", " ", text)  # a leading vowel left alone by the cut
     text = re.sub(r"(?m)^\s*(?:\d+[.)]|[-•])\s+", "", text)
     return " ".join(text.replace(":", " ").split())
 

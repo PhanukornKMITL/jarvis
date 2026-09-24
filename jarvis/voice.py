@@ -232,7 +232,9 @@ class VoiceSession:
             with_name = not name or name not in reply
             reply = split_sentences(reply) or [reply]
         else:
-            with_name = True
+            # Streamed chat: Qwen already knows the name from the profile and often says it in a
+            # later sentence, which gave "ได้ยินครับ คุณแบงค์ คุณแบงค์ ผม…" when it was added here too.
+            with_name = False
         for index, part in enumerate(reply):
             text = self.render(part, with_name=with_name and index == 0)
             self._spoken.append(text)
