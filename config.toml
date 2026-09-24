@@ -37,9 +37,9 @@ ref_audio = ".models/f5/reference.wav"
 step = 16
 
 [voice]
-# Speaking while JARVIS talks cuts it off. Works well with a headset; with speakers
-# JARVIS may hear itself, so set false if it keeps interrupting itself.
-barge_in = true
+# Speaking while JARVIS talks cuts it off. Off by default: on the WH-CH520 the mic heard
+# JARVIS itself and it kept interrupting itself. Try true with a mic that doesn't.
+barge_in = false
 # After a reply, keep listening this long for a follow-up without saying "จาวิส" again.
 follow_up_seconds = 5
 

@@ -18,6 +18,7 @@ import time
 from collections import deque
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from .skills import BY_INTENT, Context
 from .skills.light import OFF_REPLY, ON_REPLY
 from .stt import SAMPLE_RATE, WhisperSTT, clean_transcript
 from .tts import Speaker, split_sentences, synthesize_f5
-from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, split_wake
+from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, normalize, split_wake
 
 READY_REPLY = "พร้อมฟังค่ะ"
 UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอีกทีนะคะ"
@@ -55,6 +56,8 @@ PREROLL_CHUNKS = 6
 # Follow-ups without the wake word end after this many turns, so a TV can't chat forever.
 MAX_FOLLOW_UPS = 5
 HISTORY_TURNS = 6
+# Share of a heard command found in JARVIS's last reply above which it is its own echo.
+ECHO_OVERLAP = 0.6
 HISTORY_EXPIRES_SECONDS = 180
 LOG_PATH = Path(__file__).resolve().parent.parent / "work" / "voice_transcript.log"
 
@@ -101,6 +104,15 @@ def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple
         return intent, skill.handle(ctx, text)
     except (ConnectionRefusedError, asyncio.TimeoutError, OSError, ValueError, KeyError):
         return intent, ERROR_REPLY
+
+
+def is_echo(heard: str, said: str) -> bool:
+    """True when most of what was heard is JARVIS's own last reply coming back through the mic."""
+    heard, said = normalize(heard), normalize(said)
+    if not heard or not said:
+        return False
+    matched = sum(block.size for block in SequenceMatcher(None, heard, said).get_matching_blocks())
+    return matched / len(heard) >= ECHO_OVERLAP
 
 
 def _transcribe(stt: WhisperSTT, pcm: bytes) -> str:
@@ -304,6 +316,11 @@ class VoiceSession:
                     return
             next_heard = self.hear(pcm, need_wake=False)
             if next_heard is None or not next_heard.command:
+                return
+            last_said = self.ctx.history[-1][1] if self.ctx.history else ""
+            if is_echo(next_heard.command, last_said):
+                # JARVIS heard itself ("ต้นไม้ความชืด" right after its garden reply): answering it loops.
+                log_voice(f"ได้ยินเสียงตัวเอง ไม่ตอบ: {next_heard.command}")
                 return
             heard, wake_heard = next_heard, ""
             follow_ups += 1
