@@ -16,6 +16,9 @@ class Context:
     config: Config
     history: list[tuple[str, str]] = field(default_factory=list)
     """Recent (user said, JARVIS replied) turns of the current conversation, oldest first."""
+    facts: dict[str, str] = field(default_factory=dict)
+    """Latest result of each tool in this conversation, so "ทำไม" after a forecast can still
+    be answered from it."""
 
     def devices(self) -> list[dict]:
         return asyncio.run(request(self.host, self.port, {"type": "status"})).get("devices", [])

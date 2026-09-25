@@ -87,6 +87,16 @@ def soil_words(percent: float) -> str:
     return "ดินยังชื้นดี ยังไม่ต้องรดน้ำ"
 
 
+def thai_season(month: int, day: int) -> str:
+    """Thai Meteorological Department seasons; gives the model something true to explain with."""
+    if (month == 5 and day >= 15) or 6 <= month <= 9 or (month == 10 and day < 15):
+        return "ฤดูฝน" + (" ช่วงที่ฝนชุกที่สุดของปี ร่องมรสุมมักพาดผ่านไทย ฝนจึงตกบ่อยและตกนาน"
+                         if month in (8, 9) else " มรสุมตะวันตกเฉียงใต้พาความชื้นมา")
+    if (month == 10 and day >= 15) or month in (11, 12, 1, 2):
+        return "ฤดูหนาว"
+    return "ฤดูร้อน"
+
+
 def weather_facts(data: dict, day: str = "today") -> dict:
     """`data` is an Open-Meteo forecast response. Timing facts always look FORECAST_HOURS
     ahead across midnight: with only today's hours, Gemma knew rain "returns at 06:00
@@ -108,20 +118,24 @@ def weather_facts(data: dict, day: str = "today") -> dict:
 
     upcoming = hours[:FORECAST_HOURS]
     now_rain = max(current["precipitation"], upcoming[0]["rain_mm"])
-    facts: dict = {"now": rain_words(now_rain),
+    facts: dict = {"source": "พยากรณ์รายชั่วโมงจาก Open-Meteo (บริการพยากรณ์อากาศออนไลน์ อัปเดตทุกชั่วโมง)",
+                   "now": rain_words(now_rain),
                    "feels": feel_words(current["temperature_2m"], current["relative_humidity_2m"]),
                    "temperature_now": round(current["temperature_2m"]),
-                   "humidity_percent": current["relative_humidity_2m"]}
+                   "humidity_percent": current["relative_humidity_2m"],
+                   "season": thai_season(int(today[5:7]), int(today[8:10]))}
     later = f"{FORECAST_HOURS} ชั่วโมงข้างหน้า"
     if now_rain >= RAIN_MM:
         stop = next((i for i, h in enumerate(upcoming) if h["rain_mm"] < RAIN_MM), None)
         if stop is None:
             facts["rain_stops"] = f"ยังไม่หยุดตลอด {later}"
         else:
-            facts["rain_stops"] = f"ราว {when(upcoming[stop])}"
+            facts["rain_stops"] = f"ราว {when(upcoming[stop])} หลังตกต่อเนื่องอีกราว {stop} ชั่วโมง"
+            # "ตกนานมากเลยเหรอ" was answered "ตกจนถึงหกโมงเช้า" from separate stop/return facts.
             back = next((i for i in range(stop, len(upcoming)) if upcoming[i]["rain_mm"] >= RAIN_MM), None)
             facts["rain_returns"] = (f"ไม่กลับมาตกใน {later}" if back is None else
-                                     f"ราว {when(upcoming[back])} เป็น{strongest(upcoming[back:back + 3])}")
+                                     f"หยุดไปราว {back - stop} ชั่วโมง แล้วกลับมาตกราว {when(upcoming[back])} "
+                                     f"เป็น{strongest(upcoming[back:back + 3])}")
     else:
         start = next((i for i, h in enumerate(upcoming) if h["rain_mm"] >= RAIN_MM), None)
         facts["rain_starts"] = (f"ไม่มีฝนตลอด {later}" if start is None else
@@ -177,19 +191,21 @@ def _garden(ctx: Context) -> object:
         state = dict(garden.get("state", {}))
         if "soil_moisture" in state:
             state["soil"] = soil_words(state["soil_moisture"])
-        result.append({"name": garden.get("name"), "online": garden.get("online"), **state})
+        result.append({"source": "เซ็นเซอร์ในสวนที่บ้าน", "name": garden.get("name"),
+                       "online": garden.get("online"), **state})
     return result
 
 
 def _devices(ctx: Context) -> object:
-    return [{"name": "ไฟโต๊ะ" if d.get("device_id") == "desk_light" else d.get("name"),
+    return [{"source": "อุปกรณ์ในบ้านที่เชื่อมกับ JARVIS",
+             "name": "ไฟโต๊ะ" if d.get("device_id") == "desk_light" else d.get("name"),
              "type": d.get("device_type"), "online": d.get("online"), "state": d.get("state")}
             for d in ctx.devices()]
 
 
 def _datetime(_ctx: Context) -> dict:
     now = datetime.now()
-    return {"date": f"วัน{DAYS[now.weekday()]}ที่ {now.day} {MONTHS[now.month - 1]} {now.year + 543}",
+    return {"source": "นาฬิกาของเครื่อง", "date": f"วัน{DAYS[now.weekday()]}ที่ {now.day} {MONTHS[now.month - 1]} {now.year + 543}",
             "time": f"{now.hour} นาฬิกา {now.minute} นาที"}
 
 

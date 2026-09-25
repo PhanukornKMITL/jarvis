@@ -12,6 +12,12 @@ MAX_REPLY_CHARS = 110
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+|(?<=ครับ)\s+|(?<=ค่ะ)\s+|(?<=คะ)\s+")
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|(?<=ครับ)\s+|(?<=ค่ะ)\s+|(?<=คะ)\s+|\n+")
 STREAM_REPLY_CHARS = 140
+EXPLAIN_REPLY_CHARS = 260
+"""A "why" got one short sentence ("อ้างอิงจากแบบจำลองการพยากรณ์ครับ") under the 140 cap."""
+_ASKS_WHY = re.compile(r"ทำไม|เพราะอะไร|ยังไง|อย่างไร|อธิบาย|เหตุผล|หมายความว่า")
+# Without the last clause it explained a long rain with an invented "ระบบความกดอากาศต่ำ".
+EXPLAIN_RULE = ("\nผู้ใช้ถามเหตุผลหรือวิธีการ ให้ตอบ 2-3 ประโยค ใช้เหตุผลจากข้อมูลจริงก่อน เช่น ฤดูกาล "
+                "เสริมด้วยความรู้ทั่วไปได้โดยพูดเป็นความน่าจะเป็น ห้ามอ้างระบบอากาศหรือสาเหตุเฉพาะที่ไม่มีในข้อมูล")
 FIRST_CHUNK_CHARS = 30
 RUN_ON_CHARS = 60
 HISTORY_TURNS = 3
@@ -23,12 +29,15 @@ CHAT_SYSTEM = (
     "ข้อความที่ได้รับมาจากการแปลงเสียงพูดเป็นตัวอักษรด้วยโปรแกรมที่ไม่แม่นยำ "
     "อาจมีคำผิดหรือฟังไม่ครบ ถ้าข้อความดูไม่สมเหตุสมผลหรือไม่แน่ใจว่าหมายถึงอะไร "
     "ให้ถามกลับสั้นๆ เพื่อความชัดเจน อย่าเดาหรือแต่งเรื่องขึ้นมาตอบ "
-    "คุณเข้าอินเทอร์เน็ตทั่วไปไม่ได้ ใช้ได้แค่ข้อมูลในบ้านและพยากรณ์อากาศ"
+    "คุณเข้าอินเทอร์เน็ตทั่วไปไม่ได้ ใช้ได้แค่ข้อมูลในบ้านและพยากรณ์อากาศ "
+    # Asked where its data came from, it said "ชุดข้อมูลที่ถูกฝึกฝนมา" about a live forecast.
+    "ที่มาของข้อมูลของคุณ: พยากรณ์อากาศมาจาก Open-Meteo ผ่านอินเทอร์เน็ต สถานะอุปกรณ์และต้นไม้มาจากเซ็นเซอร์ในบ้าน "
+    "วันเวลามาจากนาฬิกาเครื่อง ส่วนความรู้ทั่วไปมาจากสิ่งที่โมเดลเรียนมาซึ่งอาจไม่ใช่ข้อมูลล่าสุด"
 )
 # Always in the prompt, so llama-server reuses it from cache; only the data itself is new
 # tokens (reading ~400 new tokens took ~1.3 s of every weather answer).
 DATA_RULE = (
-    "\nถ้ามีหัวข้อ ข้อมูลจริง ต่อท้าย ให้ตอบจากข้อมูลนั้นเท่านั้น ห้ามเดาตัวเลข ห้ามพูดถึงเวลาหรือความแรงของฝน"
+    "\nถ้ามีหัวข้อ ข้อมูลจริง ต่อท้าย และคำถามเกี่ยวกับข้อมูลนั้น ให้ตอบจากข้อมูลนั้น ห้ามเดาตัวเลข ห้ามพูดถึงเวลาหรือความแรงของฝน"
     "ที่ไม่มีในข้อมูล พยากรณ์ให้พูดเป็นความน่าจะเป็น พูดเป็นภาษาคนทั่วไปที่เอาไปใช้ได้ เช่น ฝนหนัก พกร่ม อบอ้าว "
     "ดินแห้ง ไม่ต้องอ่านตัวเลขเปอร์เซ็นต์ มิลลิเมตร หรือความชื้น เว้นแต่ผู้ใช้ถามตัวเลขเอง "
     "ถ้าข้อมูลมี error ให้บอกตามจริง"
@@ -104,23 +113,30 @@ def speakable(text: str) -> str:
     return " ".join(text.replace(":", " ").split())
 
 
-def _messages(ctx: Context, text: str, data: tuple[str, ...] = ()) -> list[dict]:
-    system = _system(ctx) + _profile_context(ctx) + DATA_RULE + ("\nข้อมูลจริง:\n" + "\n".join(data) if data else "")
+def _messages(ctx: Context, text: str) -> list[dict]:
+    system = _system(ctx) + _profile_context(ctx) + DATA_RULE
+    if ctx.facts:
+        system += "\nข้อมูลจริง:\n" + "\n".join(ctx.facts.values())
+    if _ASKS_WHY.search(text):
+        system += EXPLAIN_RULE
     messages = [{"role": "system", "content": system}]
     for said, replied in ctx.history[-HISTORY_TURNS:]:
         messages += [{"role": "user", "content": said}, {"role": "assistant", "content": replied}]
     return messages + [{"role": "user", "content": text}]
 
 
-def answer_from(ctx: Context, text: str, data: tuple[str, ...] = ()) -> str:
-    """The whole reply at once; `data` are tool results to answer from."""
-    reply = complete(_messages(ctx, text, data), ctx.config.llm_endpoint, temperature=0.7, max_tokens=160, timeout=60)
-    return shorten(speakable(reply), ctx.config.gender)
+def answer_from(ctx: Context, text: str) -> str:
+    """The whole reply at once, from ctx.facts when tools were used."""
+    reply = complete(_messages(ctx, text), ctx.config.llm_endpoint, temperature=0.7, max_tokens=160, timeout=60)
+    limit = EXPLAIN_REPLY_CHARS if _ASKS_WHY.search(text) else MAX_REPLY_CHARS
+    return shorten(speakable(reply), ctx.config.gender, limit)
 
 
-def stream_from(ctx: Context, text: str, data: tuple[str, ...] = ()) -> Iterator[str]:
-    """Yields whole sentences as the model writes them, up to STREAM_REPLY_CHARS in total."""
-    pieces = stream(_messages(ctx, text, data), ctx.config.llm_endpoint, temperature=0.7, max_tokens=200, timeout=60)
+def stream_from(ctx: Context, text: str) -> Iterator[str]:
+    """Yields whole sentences as the model writes them, up to STREAM_REPLY_CHARS in total
+    (EXPLAIN_REPLY_CHARS for a "why"), answering from ctx.facts when tools were used."""
+    limit = EXPLAIN_REPLY_CHARS if _ASKS_WHY.search(text) else STREAM_REPLY_CHARS
+    pieces = stream(_messages(ctx, text), ctx.config.llm_endpoint, temperature=0.7, max_tokens=320, timeout=60)
     buffer, spoken = "", 0
     try:
         for piece in pieces:
@@ -139,7 +155,7 @@ def stream_from(ctx: Context, text: str, data: tuple[str, ...] = ()) -> Iterator
                 if not sentence:
                     continue
                 spoken += len(sentence)
-                if spoken >= STREAM_REPLY_CHARS:
+                if spoken >= limit:
                     yield shorten(sentence, ctx.config.gender, limit=len(sentence))  # ensure it ends politely
                     return
                 yield sentence

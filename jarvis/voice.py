@@ -106,7 +106,9 @@ def _deferred(skill, ctx: Context, text: str) -> Iterator[str]:
 
 
 def _from_tools(ctx: Context, text: str, calls: tuple[tools.Call, ...]) -> Iterator[str]:
-    yield from stream_from(ctx, text, tuple(tools.run(ctx, list(calls))))
+    for call, line in zip(calls, tools.run(ctx, list(calls))):
+        ctx.facts[call.name] = line
+    yield from stream_from(ctx, text)
 
 
 def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str], bool]:
@@ -414,6 +416,7 @@ class VoiceSession:
         alone just stops)."""
         if time.monotonic() - self.last_turn_at > HISTORY_EXPIRES_SECONDS:
             self.ctx.history.clear()
+            self.ctx.facts.clear()
         pending: deque[Heard] = deque([heard])
         follow_ups = 0
         while True:
