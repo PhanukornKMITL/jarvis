@@ -327,7 +327,7 @@ def flood_summary(features: list[dict], matched: int, where: str) -> dict:
     return {"flooding": f"ดาวเทียมพบพื้นที่น้ำท่วม{where}ในรอบ 7 วัน",
             "area": f"{'อย่างน้อย' if partial else 'ราว'} {round(km2 * RAI_PER_KM2):,} ไร่",
             "most_in": top, "people_nearby": round(people),
-            "updated": max(f["properties"].get("_createdAt", "") for f in features)[:10]}
+            "updated": thaiwater.spoken_time(max(f["properties"].get("_createdAt", "") for f in features)[:10])}
 
 
 def satellite_flood(ctx: Context, code: int | None, where: str) -> dict:

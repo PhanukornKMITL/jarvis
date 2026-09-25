@@ -68,7 +68,7 @@ def _place(station: dict) -> str:
 
 def _reading(station: dict) -> str:
     return (f"{_place(station)} {rain_words(station['rain_24h'])} ({station['rain_24h']} มม. ใน 24 ชม. "
-            f"ถึง {station['rainfall_datetime'][11:16]})")
+            f"วัดถึง{spoken_time(station['rainfall_datetime'])})")
 
 
 def districts(province_code: int | None = None) -> dict[str, int]:
@@ -140,6 +140,22 @@ def bank_words(percent: float, below_bank_m: float) -> str:
     return "น้ำน้อย"
 
 
+def spoken_time(stamp: str) -> str:
+    """"2026-09-25 22:50" → "วันนี้ 22 นาฬิกา 50 นาที (ราว 20 นาทีก่อน)". A bare "22:50" left
+    "is this today's data?" unanswerable and was read as "ยี่สิบสอง ห้าสิบ นาฬิกา"."""
+    try:
+        at = datetime.strptime(stamp[:16], "%Y-%m-%d %H:%M") if len(stamp) > 10 else datetime.strptime(stamp, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return stamp
+    days = (datetime.now().date() - at.date()).days
+    day = {0: "วันนี้", 1: "เมื่อวาน"}.get(days, f"วันที่ {at.day}/{at.month}")
+    if len(stamp) <= 10:
+        return day
+    minutes = max(0, round((datetime.now() - at).total_seconds() / 60))
+    ago = f"ราว {minutes} นาทีก่อน" if minutes < 90 else f"ราว {round(minutes / 60)} ชั่วโมงก่อน"
+    return f"{day} {at.hour} นาฬิกา{f' {at.minute} นาที' if at.minute else ''} ({ago})"
+
+
 def _hours_old(stamp: str) -> float:
     try:
         return (datetime.now() - datetime.strptime(stamp, "%Y-%m-%d %H:%M")).total_seconds() / 3600
@@ -157,7 +173,8 @@ def _level(station: dict) -> str | None:
     trend = "กำลังขึ้น" if now - before > 0.01 else "กำลังลด" if before - now > 0.01 else "ทรงตัว"
     stamp = station.get("waterlevel_datetime", "")
     old = _hours_old(stamp)
-    when = f"ข้อมูลเก่า {round(old)} ชม." if old > STALE_HOURS else f"เวลา {stamp[11:16]}"
+    when = (f"ข้อมูลเก่า อัปเดตล่าสุด{spoken_time(stamp)}" if old > STALE_HOURS
+            else f"อัปเดต{spoken_time(stamp)}")
     return (f"สถานี{station['station']['tele_station_name']['th']} {_place(station)}: {bank_words(percent, below)} "
             f"({percent:.0f}% ของความจุลำน้ำ) {trend} {when}")
 
@@ -199,5 +216,5 @@ def dams(province_code: int | None) -> list[str]:
             continue
         spill = f" ระบายน้ำล้น {d['dam_spilled']} ล้าน ลบ.ม." if d.get("dam_spilled") else ""
         lines.append(f"เขื่อน/อ่าง{name}: น้ำ {percent:.0f}% ของความจุ รับน้ำวันนี้ {d.get('dam_inflow')} ล้าน ลบ.ม. "
-                     f"ปล่อย {d.get('dam_released')} ล้าน ลบ.ม.{spill} ({d.get('dam_date')})")
+                     f"ปล่อย {d.get('dam_released')} ล้าน ลบ.ม.{spill} (ข้อมูล{spoken_time(d.get('dam_date', ''))})")
     return lines

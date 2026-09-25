@@ -157,9 +157,10 @@ def answer_from(ctx: Context, text: str) -> str:
 
 
 def _phrase_break(buffer: str) -> int:
-    """The last space not followed by a number: "ในรอบ 7 วัน" was spoken as "ในรอบ" then "เจ็ด วัน"."""
-    for index in range(len(buffer) - 2, -1, -1):  # a trailing space: the next word is unknown yet
-        if buffer[index] == " " and not buffer[index + 1].isdigit():
+    """The last space not next to a number: "ในรอบ 7 วัน" was spoken as "ในรอบ" then "เจ็ด วัน",
+    and "23 นาฬิกา" as "23" then "นาฬิกา"."""
+    for index in range(len(buffer) - 2, 0, -1):  # a trailing space: the next word is unknown yet
+        if buffer[index] == " " and not buffer[index + 1].isdigit() and not buffer[index - 1].isdigit():
             return index
     return -1
 
