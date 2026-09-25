@@ -72,8 +72,9 @@ def _profile_context(ctx: Context) -> str:
                      "ต้องไม่มีวัตถุดิบหรือเครื่องปรุงที่ขัดกับข้อนี้เด็ดขาด ใช้ของแทน เช่น ซีอิ๊วแทนน้ำปลา เต้าหู้แทนเนื้อสัตว์")
     if profile.home_place:
         # "ผมอยู่ที่ไหน" got "ผมไม่ทราบ": it didn't know it lives in the user's home.
-        facts.append(f"คุณติดตั้งอยู่ที่บ้านของผู้ใช้ {profile.home_place} ผู้ใช้คุยกับคุณผ่านไมค์ที่บ้าน "
-                     f"ถ้าถามว่าผู้ใช้หรือคุณอยู่ที่ไหน ให้บอกว่าน่าจะอยู่ที่บ้าน {profile.home_place}")
+        # Phrased as a fact: as an instruction it was also said after an unrelated flood answer.
+        facts.append(f"บ้านของผู้ใช้อยู่{profile.home_place} คุณติดตั้งอยู่ที่บ้านนี้ "
+                     "ผู้ใช้คุยกับคุณผ่านไมค์ที่บ้าน จึงน่าจะอยู่บ้านด้วย")
     if profile.about:
         facts.append(profile.about)
     if profile.interests:
@@ -147,6 +148,14 @@ def answer_from(ctx: Context, text: str) -> str:
     return shorten(speakable(reply), ctx.config.gender, limit)
 
 
+def _phrase_break(buffer: str) -> int:
+    """The last space not followed by a number: "ในรอบ 7 วัน" was spoken as "ในรอบ" then "เจ็ด วัน"."""
+    for index in range(len(buffer) - 2, -1, -1):  # a trailing space: the next word is unknown yet
+        if buffer[index] == " " and not buffer[index + 1].isdigit():
+            return index
+    return -1
+
+
 def stream_from(ctx: Context, text: str) -> Iterator[str]:
     """Yields whole sentences as the model writes them, up to STREAM_REPLY_CHARS in total
     (EXPLAIN_REPLY_CHARS for a "why"), answering from ctx.facts when tools were used."""
@@ -160,9 +169,9 @@ def stream_from(ctx: Context, text: str) -> Iterator[str]:
                 match = _SENTENCE_BREAK.search(buffer)
                 if match:
                     sentence, buffer = buffer[: match.start()], buffer[match.end():]
-                elif len(buffer) > (FIRST_CHUNK_CHARS if spoken == 0 else RUN_ON_CHARS) and buffer.rfind(" ") >= 10:
+                elif len(buffer) > (FIRST_CHUNK_CHARS if spoken == 0 else RUN_ON_CHARS) and _phrase_break(buffer) >= 10:
                     # No sentence end yet: speak up to a phrase break so audio can start early.
-                    cut = buffer.rindex(" ")
+                    cut = _phrase_break(buffer)
                     sentence, buffer = buffer[:cut], buffer[cut + 1:]
                 else:
                     break

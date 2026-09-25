@@ -299,7 +299,10 @@ def province_code(name: str) -> int | None:
 
 def flood_summary(features: list[dict], matched: int, where: str) -> dict:
     if not matched:
-        return {"flooding": f"ดาวเทียมไม่พบพื้นที่น้ำท่วม{where}ในรอบ 7 วัน"}
+        # Pluak Daeng (Rayong) had flash floods on 24-25 Sep 2026 in the news while GISTDA had no
+        # flooded cell in the province for 30 days; "ไม่พบ" made JARVIS say there was no flood.
+        return {"flooding": f"ดาวเทียมยังไม่พบน้ำท่วมพื้นที่กว้าง{where}ในรอบ 7 วัน ซึ่งไม่ได้แปลว่าไม่มีน้ำท่วม "
+                            "น้ำท่วมฉับพลัน น้ำป่า หรือน้ำท่วมถนนที่ลดเร็ว ดาวเทียมมักจับไม่ได้"}
     km2 = sum(f["properties"].get("f_area") or 0 for f in features) / 1e6
     districts: dict[str, float] = {}
     for f in features:
@@ -335,7 +338,7 @@ def _flood(ctx: Context, province: str = "") -> dict:
             data = json.loads(response.read())
     except (OSError, ValueError):
         return {"error": "ดึงข้อมูลน้ำท่วมจาก GISTDA ไม่ได้"}
-    result = {"source": "ภาพดาวเทียมจาก GISTDA (เห็นน้ำท่วมพื้นที่กว้าง ไม่เห็นน้ำขังบนถนนหลังฝนตก)",
+    result = {"source": "ภาพดาวเทียมจาก GISTDA (เห็นน้ำท่วมพื้นที่กว้างที่แช่อยู่หลายวัน ไม่เห็นน้ำท่วมฉับพลันหรือน้ำขังบนถนน)",
               **flood_summary(data.get("features", []), data.get("numberMatched", 0), where)}
     if not code:
         # In one result so both get said: given satellite and rain as two tool results, Gemma
