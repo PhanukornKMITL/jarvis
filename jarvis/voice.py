@@ -77,7 +77,7 @@ HISTORY_TURNS = 6
 # Share of a heard command found in JARVIS's last reply above which it is its own echo.
 ECHO_OVERLAP = 0.6
 ECHO_MIN_CHARS = 5
-HISTORY_EXPIRES_SECONDS = 180
+HISTORY_EXPIRES_SECONDS = 1800  # "ฝนตกไหม" then "จะไปกินข้าวข้างนอก" 10 minutes later is one conversation
 LOG_PATH = Path(__file__).resolve().parent.parent / "work" / "voice_transcript.log"
 
 
@@ -107,8 +107,14 @@ def _deferred(skill, ctx: Context, text: str) -> Iterator[str]:
 
 def _from_tools(ctx: Context, text: str, calls: tuple[tools.Call, ...]) -> Iterator[str]:
     for call, line in zip(calls, tools.run(ctx, list(calls))):
-        ctx.facts[call.name] = line
-    yield from stream_from(ctx, text)
+        ctx.facts[call.name] = (time.time(), line)
+    said = []
+    for sentence in stream_from(ctx, text):
+        said.append(sentence)
+        yield sentence
+    reminder = tools.rain_reminder(ctx, text, " ".join(said))
+    if reminder:
+        yield reminder
 
 
 def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str], bool]:
@@ -415,8 +421,7 @@ class VoiceSession:
         an answer drops the rest of it and answers the new question instead ("หยุด"/"พอแล้ว"
         alone just stops)."""
         if time.monotonic() - self.last_turn_at > HISTORY_EXPIRES_SECONDS:
-            self.ctx.history.clear()
-            self.ctx.facts.clear()
+            self.ctx.history.clear()  # facts expire on their own (chat.FACTS_EXPIRE_SECONDS)
         pending: deque[Heard] = deque([heard])
         follow_ups = 0
         while True:

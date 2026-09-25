@@ -9,6 +9,7 @@ facts like "rain stops at 04:00" in code keeps a small model from misreading a t
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.request
 from collections.abc import Callable
@@ -24,16 +25,22 @@ MONTHS = ("มกราคม", "กุมภาพันธ์", "มีนา�
 RAIN_MM = 0.5
 """Rain per hour below this counts as no rain."""
 FORECAST_HOURS = 18
+OUTING_HOURS = 3
+"""How long a trip out is assumed to take: rain after leaving matters more than rain now."""
 FORECAST_SPANS = 6
 """Rain spans passed on; each costs prompt tokens, and reading them was most of the wait."""
 FORECAST_CACHE_SECONDS = 600
 """Open-Meteo updates hourly; refetching took ~0.8 s of every weather answer."""
 DRY_SOIL_PERCENT = 30
+# Going out needs the weather even when the question is about something else. Gemma missed
+# it in "จะไปหาอะไรกินข้างนอก กินอะไรดี" 3/3 (topic: food), so code adds it.
+_GOING_OUT = re.compile(r"ข้างนอก|นอกบ้าน|ออกไป|ออกจากบ้าน|ไปเที่ยว|เดินทาง|ตากผ้า|วิ่ง|ปั่นจักรยาน|เดินเล่น")
 
 # A short prompt of its own: under the chat persona prompt ("ตอบเนื้อหาเลย") Gemma said
 # "ผมขอเช็คก่อนนะครับ" and made the answer up instead of calling a tool (7/25 right, 25/25 here).
 SELECT_PROMPT = ("คุณคือตัวเลือกเครื่องมือของ JARVIS ผู้ช่วยในบ้าน ถ้าคำถามต้องใช้ข้อมูลจริงเรื่องอากาศ ต้นไม้ "
                  "อุปกรณ์ หรือวันเวลา ให้เรียกเครื่องมือที่เกี่ยวข้อง เรียกได้หลายตัว "
+                 "ถ้าผู้ใช้กำลังจะออกไปข้างนอก เดินทาง ตากผ้า หรือทำกิจกรรมกลางแจ้ง ให้เรียก get_weather ด้วย "
                  "ถ้าไม่ต้องใช้ข้อมูลจริงให้ตอบคำเดียวว่า ไม่ต้องใช้")
 
 
@@ -140,6 +147,16 @@ def weather_facts(data: dict, day: str = "today") -> dict:
         start = next((i for i, h in enumerate(upcoming) if h["rain_mm"] >= RAIN_MM), None)
         facts["rain_starts"] = (f"ไม่มีฝนตลอด {later}" if start is None else
                                 f"ราว {when(upcoming[start])} เป็น{strongest(upcoming[start:start + 3])}")
+    outing = upcoming[:OUTING_HOURS + 1]
+    wet = [h for h in outing if h["rain_mm"] >= RAIN_MM]
+    if not wet:
+        facts["while_out"] = f"ถ้าออกไปตอนนี้ {OUTING_HOURS} ชั่วโมงข้างหน้าไม่น่ามีฝน"
+    elif wet[0] is outing[0]:
+        dry = next((h for h in outing if h["rain_mm"] < RAIN_MM), None)
+        facts["while_out"] = (f"ถ้าออกไปตอนนี้ ตอนนี้{strongest(wet)}อยู่ และ" +
+                              (f"น่าจะหยุดราว {when(dry)}" if dry else f"น่าจะตกต่ออีก {OUTING_HOURS} ชั่วโมง"))
+    else:
+        facts["while_out"] = f"ถ้าออกไปตอนนี้ ตอนนี้ยังไม่ตก แต่ราว {when(wet[0])} น่าจะมี{strongest(wet)}"
     spans: list[list] = []  # consecutive hours with the same rain merged, nothing to misread
     for h in upcoming:
         if spans and spans[-1][2] == rain_words(h["rain_mm"]):
@@ -180,6 +197,22 @@ def _weather(ctx: Context, day: str = "today") -> dict:
         return weather_facts(cached[1], day)
     except (OSError, ValueError, KeyError, IndexError):
         return {"error": "ดึงข้อมูลอากาศไม่ได้ อาจเพราะอินเทอร์เน็ตมีปัญหา"}
+
+
+_MENTIONS_RAIN = re.compile(r"ฝน|ร่ม|เปียก")
+
+
+def rain_reminder(ctx: Context, text: str, reply: str) -> str | None:
+    """A short umbrella reminder when the user is going out, rain is likely while they are
+    out, and the reply forgot it: asked "จะไปหาอะไรกินข้างนอก กินอะไรดี" with the forecast
+    in hand, Gemma answered only about food 6/6."""
+    if not _GOING_OUT.search(text) or _MENTIONS_RAIN.search(reply):
+        return None
+    facts = _weather(ctx)
+    outlook = facts.get("while_out", "")
+    if "error" in facts or "ไม่น่ามีฝน" in outlook:
+        return None
+    return outlook.replace("ถ้าออกไปตอนนี้ ", "") + " อย่าลืมพกร่มนะคะ"
 
 
 def _garden(ctx: Context) -> object:
@@ -243,6 +276,8 @@ def pick(text: str, endpoint: str) -> list[Call]:
         if tool:
             known = tool.parameters.keys()
             picked.append(Call(tool.name, {k: v for k, v in arguments.items() if k in known}))
+    if _GOING_OUT.search(text) and not any(call.name == "get_weather" for call in picked):
+        picked.append(Call("get_weather", {"day": "tomorrow"} if "พรุ่งนี้" in text else {}))
     return picked
 
 

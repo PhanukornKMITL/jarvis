@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from collections.abc import Iterator
 
@@ -20,7 +21,9 @@ EXPLAIN_RULE = ("\nผู้ใช้ถามเหตุผลหรือว�
                 "เสริมด้วยความรู้ทั่วไปได้โดยพูดเป็นความน่าจะเป็น ห้ามอ้างระบบอากาศหรือสาเหตุเฉพาะที่ไม่มีในข้อมูล")
 FIRST_CHUNK_CHARS = 30
 RUN_ON_CHARS = 60
-HISTORY_TURNS = 3
+HISTORY_TURNS = 6
+FACTS_EXPIRE_SECONDS = 3600
+"""Tool results older than this are dropped; younger ones are shown with their age."""
 
 CHAT_SYSTEM = (
     "คุณคือ JARVIS ผู้ช่วยเสียงพูดภาษาไทย {gender} แทนตัวเองว่า {pronoun} ลงท้ายด้วย {particle} ตอบสั้น กระชับ เป็นกันเอง "
@@ -40,7 +43,8 @@ DATA_RULE = (
     "\nถ้ามีหัวข้อ ข้อมูลจริง ต่อท้าย และคำถามเกี่ยวกับข้อมูลนั้น ให้ตอบจากข้อมูลนั้น ห้ามเดาตัวเลข ห้ามพูดถึงเวลาหรือความแรงของฝน"
     "ที่ไม่มีในข้อมูล พยากรณ์ให้พูดเป็นความน่าจะเป็น พูดเป็นภาษาคนทั่วไปที่เอาไปใช้ได้ เช่น ฝนหนัก พกร่ม อบอ้าว "
     "ดินแห้ง ไม่ต้องอ่านตัวเลขเปอร์เซ็นต์ มิลลิเมตร หรือความชื้น เว้นแต่ผู้ใช้ถามตัวเลขเอง "
-    "ถ้าข้อมูลมี error ให้บอกตามจริง"
+    "ถ้าข้อมูลมี error ให้บอกตามจริง ถ้าข้อมูลเกี่ยวกับสิ่งที่ผู้ใช้กำลังจะทำ เช่น ออกไปข้างนอกแล้วฝนตก "
+    "ให้เตือนสั้นๆ ท้ายคำตอบ ถ้าไม่เกี่ยวกับคำถามห้ามพูดถึงข้อมูลนั้น"
 )
 
 
@@ -115,8 +119,14 @@ def speakable(text: str) -> str:
 
 def _messages(ctx: Context, text: str) -> list[dict]:
     system = _system(ctx) + _profile_context(ctx) + DATA_RULE
+    now = time.time()
+    for name, (at, _) in list(ctx.facts.items()):
+        if now - at > FACTS_EXPIRE_SECONDS:
+            del ctx.facts[name]
     if ctx.facts:
-        system += "\nข้อมูลจริง:\n" + "\n".join(ctx.facts.values())
+        system += "\nข้อมูลจริง:\n" + "\n".join(
+            f"(ดึงมาเมื่อ {round((now - at) / 60)} นาทีก่อน) {line}" if now - at >= 60 else line
+            for at, line in ctx.facts.values())
     if _ASKS_WHY.search(text):
         system += EXPLAIN_RULE
     messages = [{"role": "system", "content": system}]
