@@ -64,8 +64,10 @@ python3 -m jarvis.cli light-off
 
 Everything runs on the Mac: whisper.cpp for Thai speech-to-text, Gemma through
 `llama-server` for understanding and chat, and F5-TTS (or the local `say` voice) for
-replies. Microphone audio never leaves the machine. Only the weather tool uses
-the internet (it sends the configured coordinates to api.open-meteo.com).
+replies. Microphone audio and conversations never leave the machine. Read-only tools
+fetch public data: the forecast (coordinates to api.open-meteo.com), rain gauges and
+flash-flood warnings (ThaiWater, no key), satellite flood maps (GISTDA, key in
+`secrets.toml`) and headlines (Google News RSS, the search words only).
 Models download once into the ignored `.models/` folder.
 
 ```sh
@@ -110,10 +112,11 @@ permission the first time. Press Ctrl+C to stop listening.
   ดินค่อนข้างแห้ง) and computes facts like when the rain stops, and the LLM answers from
   them. Add a `Tool` to `TOOLS` and the LLM can use it; a wrong pick only gives a wrong
   answer, never a wrong action.
-- Flooding: with a GISTDA key in the git-ignored `secrets.toml` (`[gistda] api_key`, from
-  https://disaster.gistda.or.th/services/open-api) JARVIS answers from satellite flood maps of
-  the last 7 days, near home or by province, next to a rain-based estimate for street ponding
-  that satellites miss. Without a key the flood tool is simply not offered.
+- Flooding gets one report ranked by evidence: news, official warnings and rain gauges
+  first (they see flash floods), then GISTDA satellite flood maps (big standing floods; needs
+  `[gistda] api_key` in the git-ignored `secrets.toml`) and the forecast. Places are found in
+  the question itself, provinces and districts alike. Put your home in `profile.toml`
+  `[home] lat, lon, place`, not in the committed `config.toml`.
 - Every voice command's audio, transcripts and outcome are saved locally under
   `work/dataset/` for measuring and training later (`[dataset] enabled = false`
   turns this off).

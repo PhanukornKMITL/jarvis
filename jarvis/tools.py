@@ -16,6 +16,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from concurrent.futures import ThreadPoolExecutor
+
+from . import news, rainfall
 from .config import Config
 from .llm import tool_calls
 from .skills.base import Context
@@ -35,15 +38,14 @@ FORECAST_CACHE_SECONDS = 600
 DRY_SOIL_PERCENT = 30
 # Going out needs the weather even when the question is about something else. Gemma missed
 # it in "จะไปหาอะไรกินข้างนอก กินอะไรดี" 3/3 (topic: food), so code adds it.
-# Flooding needs both halves: satellite floods (get_flood) miss street ponding, which only the
-# rain forecast can estimate. "น้ำท่วมไหม" alone got no tool at all ("ที่ไหนครับ?").
+# Flood questions always get the combined report: "น้ำท่วมไหม" alone got no tool at all.
 _FLOODING = re.compile(r"ท่วม|น้ำขัง|น้ำรอการระบาย")
 _GOING_OUT = re.compile(r"ข้างนอก|นอกบ้าน|ออกไป|ออกจากบ้าน|ไปเที่ยว|เดินทาง|ตากผ้า|วิ่ง|ปั่นจักรยาน|เดินเล่น")
 
 # A short prompt of its own: under the chat persona prompt ("ตอบเนื้อหาเลย") Gemma said
 # "ผมขอเช็คก่อนนะครับ" and made the answer up instead of calling a tool (7/25 right, 25/25 here).
 SELECT_PROMPT = ("คุณคือตัวเลือกเครื่องมือของ JARVIS ผู้ช่วยในบ้าน ถ้าคำถามต้องใช้ข้อมูลจริงเรื่องอากาศ ต้นไม้ "
-                 "อุปกรณ์ น้ำท่วม หรือวันเวลา ให้เรียกเครื่องมือที่เกี่ยวข้อง เรียกได้หลายตัว "
+                 "อุปกรณ์ น้ำท่วม ข่าว หรือวันเวลา ให้เรียกเครื่องมือที่เกี่ยวข้อง เรียกได้หลายตัว "
                  "ถ้าผู้ใช้กำลังจะออกไปข้างนอก เดินทาง ตากผ้า หรือทำกิจกรรมกลางแจ้ง ให้เรียก get_weather ด้วย "
                  "ถ้าไม่ต้องใช้ข้อมูลจริงให้ตอบคำเดียวว่า ไม่ต้องใช้")
 
@@ -289,10 +291,17 @@ PROVINCES = {
 }
 
 
+# Province names that are also everyday words ("ท่วมเลยไหม", "ตากผ้า"): only with จังหวัด/จ.
+_EVERYDAY_WORDS = {"เลย", "ตาก"}
+
+
 def province_code(name: str) -> int | None:
     """"จังหวัดพระนครศรีอยุธยา", "อยุธยา" → 14; longest match first ("นครนายก" before "นคร")."""
     for short in sorted(PROVINCES, key=len, reverse=True):
-        if short in name:
+        if short in _EVERYDAY_WORDS:
+            if re.search(rf"(?:จังหวัด|จ\.)\s*{short}", name) or name.strip() == short:
+                return PROVINCES[short]
+        elif short in name:
             return PROVINCES[short]
     return None
 
@@ -318,35 +327,117 @@ def flood_summary(features: list[dict], matched: int, where: str) -> dict:
             "updated": max(f["properties"].get("_createdAt", "") for f in features)[:10]}
 
 
-def _flood(ctx: Context, province: str = "") -> dict:
+def satellite_flood(ctx: Context, code: int | None, where: str) -> dict:
+    """GISTDA flooded area in province `code`, or near home when None."""
     params = {"limit": FLOOD_FEATURES}
-    code = province_code(province) if province else None
-    if province and code is None:
-        return {"error": f"ไม่รู้จักจังหวัด {province}"}
     if code:
         params["pv_idn"] = code
-        where = f"ใน{province}"
     else:
         lat, lon, d = ctx.config.weather_lat, ctx.config.weather_lon, HOME_BOX_DEGREES
         params["bbox"] = f"{lon - d},{lat - d},{lon + d},{lat + d}"
-        where = "แถวบ้าน (รัศมีราว 15 กม.)"
     url = GISTDA_FLOOD + "?" + "&".join(f"{k}={v}" for k, v in params.items())
     # The key goes in a header: the API echoes query strings back in its "links".
     request = urllib.request.Request(url, headers={"API-Key": ctx.config.gistda_api_key})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        data = json.loads(response.read())
+    return flood_summary(data.get("features", []), data.get("numberMatched", 0), where)
+
+
+def home_province(config: Config) -> str:
+    """"ระยอง" from [home] place "... จังหวัดระยอง"; empty if unknown."""
+    match = re.search(r"จังหวัด\s*(\S+)", config.profile.home_place)
+    return match.group(1) if match else ""
+
+
+def province_name(code: int) -> str:
+    return next(name for name, number in PROVINCES.items() if number == code)
+
+
+def _rain_measured(ctx: Context, province: str = "") -> dict:
+    where = place_in(province, ctx.config) if province else Place("")
+    if province and not where.name:
+        return {"error": f"ไม่รู้จักพื้นที่ {province}"}
+    name = province_name(where.province) if where.province else home_province(ctx.config)
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            data = json.loads(response.read())
+        return rainfall.measured(where.province, name, ctx.config.weather_lat, ctx.config.weather_lon, where.district)
+    except (OSError, ValueError, KeyError):
+        return {"error": "ดึงข้อมูลฝนจากสถานีวัดของ ThaiWater ไม่ได้"}
+
+
+def _news(_ctx: Context, query: str = "") -> dict:
+    try:
+        found = news.headlines(query)
     except (OSError, ValueError):
-        return {"error": "ดึงข้อมูลน้ำท่วมจาก GISTDA ไม่ได้"}
-    result = {"source": "ภาพดาวเทียมจาก GISTDA (เห็นน้ำท่วมพื้นที่กว้างที่แช่อยู่หลายวัน ไม่เห็นน้ำท่วมฉับพลันหรือน้ำขังบนถนน)",
-              **flood_summary(data.get("features", []), data.get("numberMatched", 0), where)}
-    if not code:
-        # In one result so both get said: given satellite and rain as two tool results, Gemma
-        # answered only "ดาวเทียมไม่พบน้ำท่วม" and dropped the heavy rain coming.
-        rain = _weather(ctx).get("flooding")
-        if rain:
-            result["rain_next_hours"] = rain
-    return result
+        return {"error": "ดึงข่าวไม่ได้"}
+    return {"source": "หัวข่าวจาก Google News ภายใน 2 วัน ให้บอกชื่อสำนักข่าวและเวลาเมื่อพูดถึง",
+            "news": found or [f"ไม่พบข่าวเรื่อง {query} ใน 2 วันที่ผ่านมา"]}
+
+
+@dataclass(frozen=True)
+class Place:
+    name: str
+    """What to call it and search news for; "" = home."""
+    province: int | None = None
+    district: str = ""
+
+
+def place_in(text: str, config: Config) -> Place:
+    """The place a question is about, found in the words themselves: a small model passed
+    "ปลวกแดง" (a district) as a province and got "ไม่รู้จักจังหวัด"."""
+    code = province_code(text)
+    if code:
+        return Place(province_name(code), code)
+    try:
+        found = rainfall.district_in(text)
+    except (OSError, ValueError, KeyError):
+        found = None
+    if found:
+        return Place(found[0], found[1], found[0])
+    return Place("")
+
+
+def _flood_report(ctx: Context, place: str = "") -> dict:
+    """All flood evidence for one place in one result, strongest first. Given the sources as
+    separate results, Gemma repeated the first (satellite: nothing) and dropped news of the
+    Pluak Daeng flash flood and 163 mm at a Rayong gauge."""
+    where = place_in(place, ctx.config) if place else Place("")
+    area = where.name or home_province(ctx.config)
+    label = f"อ.{where.district}" if where.district else (f"จ.{where.name}" if where.name else "แถวบ้าน")
+    jobs = {
+        "news": lambda: [line for line in news.headlines(f"{area} น้ำท่วม") if "ท่วม" in line or "น้ำ" in line],
+        "gauges": lambda: rainfall.measured(where.province, province_name(where.province) if where.province else area,
+                                            ctx.config.weather_lat, ctx.config.weather_lon, where.district),
+    }
+    if ctx.config.gistda_api_key:
+        jobs["satellite"] = lambda: satellite_flood(ctx, where.province, f"ใน{label}")
+    if not where.name:
+        jobs["forecast"] = lambda: _weather(ctx).get("flooding")
+    with ThreadPoolExecutor(len(jobs)) as pool:
+        futures = {name: pool.submit(job) for name, job in jobs.items()}
+    found = {}
+    for name, future in futures.items():
+        try:
+            found[name] = future.result()
+        except (OSError, ValueError, KeyError, TypeError):
+            found[name] = None
+    findings = []
+    if found.get("news"):
+        findings.append("ข่าว: " + " / ".join(found["news"][:2]))
+    gauges = found.get("gauges") or {}
+    warnings = [w for w in gauges.get("official_warnings", []) if not w.startswith("ไม่มี")]
+    if warnings:
+        findings.append("ประกาศเตือนจาก ThaiWater: " + " / ".join(warnings[:2]))
+    if gauges.get("rain_measured"):
+        findings.append("สถานีวัดฝน: " + gauges["rain_measured"])
+    if found.get("satellite"):
+        findings.append("ดาวเทียม GISTDA: " + " ".join(str(v) for v in found["satellite"].values()))
+    if found.get("forecast"):
+        findings.append("พยากรณ์ฝนข้างหน้า: " + found["forecast"])
+    if not findings:
+        return {"error": "ดึงข้อมูลน้ำท่วมไม่ได้เลยสักแหล่ง"}
+    return {"place": label, "findings": findings,
+            "how_to_answer": "สรุปจากข้อแรกๆ ก่อน ถ้ามีข่าวให้บอกชื่อสำนักข่าวและเวลา ข่าวและสถานีวัดเห็นน้ำท่วมฉับพลัน"
+                             "ที่ดาวเทียมมองไม่เห็น อย่าบอกว่าไม่ท่วมเพราะดาวเทียมไม่พบ"}
 
 
 TOOLS = (
@@ -356,9 +447,14 @@ TOOLS = (
     Tool("get_garden", "เซ็นเซอร์ต้นไม้: ความชื้นดิน อุณหภูมิ ต้องรดน้ำไหม", _garden),
     Tool("get_devices", "สถานะอุปกรณ์ในบ้าน เช่น ไฟเปิดหรือปิดอยู่ ออนไลน์ครบไหม", _devices),
     Tool("get_datetime", "วันที่และเวลาตอนนี้", _datetime),
-    Tool("get_flood", "พื้นที่น้ำท่วมจริงจากดาวเทียมในรอบ 7 วัน แถวบ้านหรือในจังหวัดที่ถาม", _flood,
-         {"province": {"type": "string", "description": "ชื่อจังหวัดที่ถาม เว้นว่างถ้าถามแถวบ้าน"}},
-         available=lambda config: bool(config.gistda_api_key)),
+    Tool("get_flood_report", "สถานการณ์น้ำท่วม: รวมข่าว ประกาศเตือน สถานีวัดฝน ดาวเทียม และพยากรณ์ "
+         "แถวบ้าน หรือจังหวัด/อำเภอที่ถาม", _flood_report,
+         {"place": {"type": "string", "description": "จังหวัดหรืออำเภอที่ถาม เว้นว่างถ้าถามแถวบ้าน"}}),
+    Tool("get_rain_measured", "ฝนที่ตกจริงจากสถานีวัดฝนใน 24 ชั่วโมงที่ผ่านมา เมื่อวานฝนหนักแค่ไหน "
+         "แถวบ้านหรือในจังหวัด/อำเภอที่ถาม", _rain_measured,
+         {"province": {"type": "string", "description": "จังหวัดหรืออำเภอที่ถาม เว้นว่างถ้าถามแถวบ้าน"}}),
+    Tool("get_news", "หัวข่าวล่าสุดของไทยใน 2 วัน ค้นตามคำสำคัญ หรือข่าวเด่นถ้าไม่ระบุ", _news,
+         {"query": {"type": "string", "description": "คำค้น เช่น ระยอง น้ำท่วม เว้นว่างถ้าขอข่าวเด่น"}}),
 )
 BY_NAME = {tool.name: tool for tool in TOOLS}
 
@@ -388,21 +484,26 @@ def pick(text: str, config: Config) -> list[Call]:
         if tool:
             known = tool.parameters.keys()
             picked.append(Call(tool.name, {k: v for k, v in arguments.items() if k in known}))
-    names = {call.name for call in picked}
-    if (_GOING_OUT.search(text) or _FLOODING.search(text)) and "get_weather" not in names:
+    if _FLOODING.search(text):
+        # One report instead of the LLM's mix of weather, news and satellite calls.
+        where = place_in(text, config)
+        picked = [c for c in picked if c.name in ("get_devices", "get_garden", "get_datetime")]
+        picked.append(Call("get_flood_report", {"place": where.name} if where.name else {}))
+    elif _GOING_OUT.search(text) and "get_weather" not in {call.name for call in picked}:
         picked.append(Call("get_weather", {"day": "tomorrow"} if "พรุ่งนี้" in text else {}))
-    if _FLOODING.search(text) and "get_flood" not in names and BY_NAME["get_flood"].available(config):
-        picked.append(Call("get_flood", {}))
     return picked
 
 
+def _run_one(ctx: Context, call: Call) -> str:
+    try:
+        result = BY_NAME[call.name].run(ctx, **call.arguments)
+    except (OSError, ValueError, KeyError, TypeError) as error:  # e.g. device server down
+        result = {"error": f"อ่านข้อมูลไม่ได้ ({type(error).__name__})"}
+    return f"{call.name}: {json.dumps(result, ensure_ascii=False)}"
+
+
 def run(ctx: Context, calls: list[Call]) -> list[str]:
-    """One line per tool for the answer prompt: "get_weather: {...}"."""
-    lines = []
-    for call in calls:
-        try:
-            result = BY_NAME[call.name].run(ctx, **call.arguments)
-        except (OSError, ValueError, KeyError, TypeError) as error:  # e.g. device server down
-            result = {"error": f"อ่านข้อมูลไม่ได้ ({type(error).__name__})"}
-        lines.append(f"{call.name}: {json.dumps(result, ensure_ascii=False)}")
-    return lines
+    """One line per tool for the answer prompt: "get_weather: {...}". Tools run in parallel:
+    a flood question asks four services."""
+    with ThreadPoolExecutor(max(1, len(calls))) as pool:
+        return list(pool.map(lambda call: _run_one(ctx, call), calls))
