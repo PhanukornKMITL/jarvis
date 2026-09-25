@@ -113,8 +113,13 @@ def shorten(text: str, gender: str, limit: int = MAX_REPLY_CHARS) -> str:
     return reply
 
 
+_APOLOGY = re.compile(r"^(?:ผม|ดิฉัน|ฉัน)?(?:ต้อง)?(?:ขออภัย|ขอโทษ)[^ ]*(?:ครับ|ค่ะ|คะ)?[ ,]*")
+
+
 def speakable(text: str) -> str:
-    """Qwen sometimes answers in markdown ("**สลัด**:", "1."), which TTS would read out."""
+    """Qwen sometimes answers in markdown ("**สลัด**:", "1."), which TTS would read out.
+    A leading apology goes too: "ผมขออภัยครับ" kept coming back despite the prompt."""
+    text = _APOLOGY.sub("", text.strip())
     text = re.sub(r"[*#`_>|]+", "", text)
     # Qwen2 slips Chinese into Thai: CJK characters and full-width punctuation ("，。").
     text = re.sub(r"[\u3000-\u303f\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]+", " ", text)

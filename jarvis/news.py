@@ -18,7 +18,7 @@ from html import unescape
 SEARCH = "https://news.google.com/rss/search?q={query}+when:2d&hl=th&gl=TH&ceid=TH:th"
 TOP = "https://news.google.com/rss?hl=th&gl=TH&ceid=TH:th"
 CACHE_SECONDS = 600
-MAX_ITEMS = 5
+MAX_ITEMS = 8
 _cache: dict[str, tuple[float, list[str]]] = {}
 # Parsed with regexes, not xml.etree: this Mac's Homebrew Python 3.14 has a broken pyexpat.
 _ITEM = re.compile(r"<item\b.*?</item>", re.S)

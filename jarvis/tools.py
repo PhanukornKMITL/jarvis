@@ -421,14 +421,27 @@ def _flood_report(ctx: Context, place: str = "") -> dict:
         except (OSError, ValueError, KeyError, TypeError):
             found[name] = None
     findings = []
+    # "ท่วมตรงไหน" after a report of "ชลบุรี-ระยอง" got "ข้อมูลไม่ได้ระบุ": name the districts.
+    try:
+        known = rainfall.districts(where.province or province_code(area))
+        headlines = " ".join(found.get("news") or [])
+        in_news = [d for d in sorted(known, key=len, reverse=True) if len(d) >= 3 and d in headlines]
+        heavy = rainfall.heavy_districts(where.province, ctx.config.weather_lat, ctx.config.weather_lon,
+                                         where.district)
+    except (OSError, ValueError, KeyError):
+        in_news, heavy = [], []
+    if in_news:
+        findings.append("อำเภอที่ข่าวพูดถึงเรื่องน้ำ: " + ", ".join(in_news[:6]))
     if found.get("news"):
-        findings.append("ข่าว: " + " / ".join(found["news"][:2]))
+        findings.append("ข่าว: " + " / ".join(found["news"][:4]))
     gauges = found.get("gauges") or {}
     warnings = [w for w in gauges.get("official_warnings", []) if not w.startswith("ไม่มี")]
     if warnings:
         findings.append("ประกาศเตือนจาก ThaiWater: " + " / ".join(warnings[:2]))
     if gauges.get("rain_measured"):
         findings.append("สถานีวัดฝน: " + gauges["rain_measured"])
+    if heavy:
+        findings.append("อำเภอที่ฝนหนัก (เกิน 35 มม. ใน 24 ชม.): " + ", ".join(heavy[:6]))
     if found.get("satellite"):
         findings.append("ดาวเทียม GISTDA: " + " ".join(str(v) for v in found["satellite"].values()))
     if found.get("forecast"):

@@ -59,14 +59,35 @@ def _reading(station: dict) -> str:
             f"ถึง {station['rainfall_datetime'][11:16]})")
 
 
+def districts(province_code: int | None = None) -> dict[str, int]:
+    """District name → province code, from the gauges' own place names."""
+    return {s["geocode"]["amphoe_name"]["th"]: int(s["geocode"]["province_code"]) for s in _get("rain_24h")
+            if s["geocode"].get("amphoe_name", {}).get("th") and s["geocode"].get("province_code")
+            and (province_code is None or s["geocode"]["province_code"] == str(province_code))}
+
+
+def heavy_districts(province_code: int | None, lat: float, lon: float, district: str = "") -> list[str]:
+    """Districts whose wettest gauge had heavy rain (over 35 mm in 24 h), wettest first."""
+    wettest: dict[str, float] = {}
+    for s in _get("rain_24h"):
+        if not isinstance(s.get("rain_24h"), (int, float)) or s["rain_24h"] <= 35:
+            continue
+        g = s["geocode"]
+        name = g.get("amphoe_name", {}).get("th", "")
+        inside = (name == district if district else g.get("province_code") == str(province_code) if province_code
+                  else _km(s, lat, lon) <= NEAR_KM)
+        if inside:
+            wettest[name] = max(wettest.get(name, 0), s["rain_24h"])
+    return sorted(wettest, key=wettest.get, reverse=True)
+
+
 def district_in(text: str) -> tuple[str, int] | None:
     """(district, province code) of a district named in `text`, from the gauges' own place
     names ("ปลวกแดงน้ำท่วมไหม" → ("ปลวกแดง", 21)); longest name first."""
-    districts = {s["geocode"]["amphoe_name"]["th"]: int(s["geocode"]["province_code"]) for s in _get("rain_24h")
-                 if s["geocode"].get("amphoe_name", {}).get("th") and s["geocode"].get("province_code")}
-    for name in sorted(districts, key=len, reverse=True):
+    names = districts()
+    for name in sorted(names, key=len, reverse=True):
         if len(name) >= 3 and name in text:
-            return name, districts[name]
+            return name, names[name]
     return None
 
 
