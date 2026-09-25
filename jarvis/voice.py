@@ -46,7 +46,7 @@ NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรี
 ERROR_REPLY = "ติดต่อ JARVIS หรือโมเดลภาษาไม่ได้ค่ะ"
 # "ขอเช็คแป๊บนึง" before a chat reply ("ขี้เกียจไปอาบน้ำอะ") sounded silly: nothing was checked.
 # No "อืม": F5 reads it as a word, not the hum a person makes.
-THINK_FILLERS = ("เดี๋ยวนะคะ", "ขอคิดแป๊บนึงนะคะ", "ได้ค่ะ ขอคิดก่อนนะคะ")
+THINK_FILLERS = ("สักครู่นะคะ", "ขอคิดแป๊บนึงนะคะ", "ได้ค่ะ ขอคิดก่อนนะคะ")
 LOOKUP_FILLERS = ("ขอเช็คแป๊บนึงนะคะ", "สักครู่นะคะ ขอดูข้อมูลก่อน", "ได้ค่ะ ขอเช็คก่อนนะคะ")
 FILLERS = (*THINK_FILLERS, *LOOKUP_FILLERS)
 FILLER_AFTER_SECONDS = 0.6
@@ -85,6 +85,10 @@ ECHO_OVERLAP = 0.6
 ECHO_MIN_CHARS = 5
 HISTORY_EXPIRES_SECONDS = 1800  # "ฝนตกไหม" then "จะไปกินข้าวข้างนอก" 10 minutes later is one conversation
 LOG_PATH = Path(__file__).resolve().parent.parent / "work" / "voice_transcript.log"
+MEMORY_PATH = LOG_PATH.with_name("conversation.json")
+"""Recent turns and tool results, so a restart doesn't wipe the conversation: after one,
+"เมื่อกี้ผมพูดว่าอะไร" had nothing to go on. Expired entries are dropped when saved."""
+FACTS_KEEP_SECONDS = 3600
 
 
 def log_voice(message: str) -> None:
@@ -207,6 +211,7 @@ class VoiceSession:
         self.f5_port = config.f5_port if config.tts_engine == "f5" else None
         self.speaker = Speaker(config.tts_voice, self.f5_port)
         self.last_turn_at = 0.0
+        self._load_memory()
         self._spoken: list[str] = []
         self._carry = b""
         self.last_score: float | None = None
@@ -450,6 +455,33 @@ class VoiceSession:
             return
         self.converse(heard, wake_heard)
 
+    def _load_memory(self) -> None:
+        if not self.config.remember_across_restarts:
+            MEMORY_PATH.unlink(missing_ok=True)  # turned off: don't keep what was said
+            return
+        try:
+            saved = json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        age = time.time() - saved.get("saved_at", 0)
+        if age < HISTORY_EXPIRES_SECONDS:
+            self.ctx.history[:] = [tuple(turn) for turn in saved.get("history", [])][-HISTORY_TURNS:]
+            self.last_turn_at = time.monotonic() - age
+        now = time.time()
+        self.ctx.facts.update({name: (at, line) for name, (at, line) in saved.get("facts", {}).items()
+                               if now - at < FACTS_KEEP_SECONDS})
+
+    def _save_memory(self) -> None:
+        if not self.config.remember_across_restarts:
+            return
+        now = time.time()
+        memory = {"saved_at": now, "history": self.ctx.history,
+                  "facts": {name: fact for name, fact in self.ctx.facts.items() if now - fact[0] < FACTS_KEEP_SECONDS}}
+        try:
+            MEMORY_PATH.write_text(json.dumps(memory, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
     def converse(self, heard: Heard, wake_heard: str) -> None:
         """Answers, then keeps listening for follow-ups without the wake word. Speaking over
         an answer drops the rest of it and answers the new question instead ("หยุด"/"พอแล้ว"
@@ -512,6 +544,7 @@ class VoiceSession:
         self.ctx.history.append((heard.command, said))
         del self.ctx.history[:-HISTORY_TURNS]
         self.last_turn_at = time.monotonic()
+        self._save_memory()
         return barge, unspoken
 
 

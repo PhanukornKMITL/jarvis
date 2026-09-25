@@ -181,3 +181,14 @@ avoid = "ความกดอากาศต่ำ"
 [[daily_life.memory]]
 say = "เย็นนี้จะออกไปวิ่งดีไหม"
 tools = ["get_weather"]
+[[daily_life.memory]]
+say = ["ฝนตกไหม", "เมื่อกี้ผมพูดว่าอะไร"]
+route = "recall"
+mention = "ฝนตกไหม"
+[[daily_life.memory]]
+say = "เมื่อกี้ผมพูดว่าอะไร"
+route = "recall"
+mention = "ยังไม่มี|เพิ่งเริ่ม"
+[[daily_life.memory]]
+say = ["ผมจะไปตลาดตอนเย็น", "ตะกี้ผมบอกว่าจะไปไหน"]
+mention = "ตลาด"

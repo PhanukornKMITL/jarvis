@@ -57,6 +57,8 @@ class Config:
     speaker_check: bool = True
     speaker_threshold: float = 0.30
     speaker_follow_up_threshold: float = 0.20
+    remember_across_restarts: bool = True
+    """Keep the last 30 minutes of conversation in work/conversation.json ([voice])."""
     weather_lat: float = 13.7563
     weather_lon: float = 100.5018
     dataset_dir: Path | None = ROOT / "work" / "dataset"
@@ -129,6 +131,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
         speaker_check=bool(voice.get("speaker_check", default.speaker_check)),
         speaker_threshold=float(voice.get("speaker_threshold", default.speaker_threshold)),
         speaker_follow_up_threshold=float(voice.get("speaker_follow_up_threshold", default.speaker_follow_up_threshold)),
+        remember_across_restarts=bool(voice.get("remember_across_restarts", default.remember_across_restarts)),
         weather_lat=float(weather.get("lat", default.weather_lat)),
         weather_lon=float(weather.get("lon", default.weather_lon)),
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,

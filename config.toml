@@ -51,6 +51,10 @@ step = 16
 barge_in = true
 # After a reply, keep listening this long for a follow-up without saying "จาวิส" again.
 follow_up_seconds = 5
+# Keep the last 30 minutes of conversation (what you said, what JARVIS answered, tool
+# results; no audio) in work/conversation.json so a restart doesn't forget it.
+# false also deletes that file.
+remember_across_restarts = true
 # Only obey the enrolled owner's voice (also stops JARVIS answering its own echo).
 # Enroll with: .venv-tts/bin/python -m jarvis.speaker_id   (runs in the `tts` service)
 speaker_check = true
