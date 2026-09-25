@@ -23,6 +23,7 @@ from . import news, thaiwater
 from .config import Config
 from .llm import tool_calls
 from .skills.base import Context
+from .skills.light import mentions_light
 
 DAYS = ("จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์")
 MONTHS = ("มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -41,6 +42,7 @@ DRY_SOIL_PERCENT = 30
 # it in "จะไปหาอะไรกินข้างนอก กินอะไรดี" 3/3 (topic: food), so code adds it.
 # Flood questions always get the combined report: "น้ำท่วมไหม" alone got no tool at all.
 _FLOODING = re.compile(r"ท่วม|น้ำขัง|น้ำรอการระบาย")
+_ASKS_STATUS = re.compile(r"เช็ค|สถาน|เป็นไง|ยังไง|อยู่ไหม|อยู่มั้ย|หรือยัง|หรือเปล่า|ไหม|มั้ย|ดูให้")
 _GOING_OUT = re.compile(r"ข้างนอก|นอกบ้าน|ออกไป|ออกจากบ้าน|ไปเที่ยว|เดินทาง|ตากผ้า|วิ่ง|ปั่นจักรยาน|เดินเล่น")
 
 # A short prompt of its own: under the chat persona prompt ("ตอบเนื้อหาเลย") Gemma said
@@ -556,6 +558,11 @@ def pick(text: str, config: Config) -> list[Call]:
         picked.append(Call("get_flood_report", {"place": where.name} if where.name else {}))
     elif _GOING_OUT.search(text) and "get_weather" not in {call.name for call in picked}:
         picked.append(Call("get_weather", {"day": "tomorrow"} if "พรุ่งนี้" in text else {}))
+    if mentions_light(text) and _ASKS_STATUS.search(text) and "get_devices" not in {c.name for c in picked}:
+        # A light with a checking/question word is a status question, however garbled:
+        # "เช็คสถานน้ำไฟ" (สถานะไฟ) went to the water-level tool, or to nothing, once water
+        # tools existed. Without one ("บริฟัยให้น้อย") it stays a garbled command, asked again.
+        picked.append(Call("get_devices", {}))
     return picked
 
 

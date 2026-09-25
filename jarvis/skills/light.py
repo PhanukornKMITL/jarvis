@@ -21,7 +21,7 @@ def _switch(ctx: Context, action: str, done: str) -> str:
     return done if ctx.action(TARGET, action).get("ok") else "สั่งไฟไม่สำเร็จค่ะ"
 
 
-def _mentions_light(text: str) -> bool:
+def mentions_light(text: str) -> bool:
     return bool(_LIGHT_WORD.search(text))
 
 
@@ -30,12 +30,12 @@ SKILLS = (
         intent="light_on",
         handle=lambda ctx, _text: _switch(ctx, "turn_on", ON_REPLY),
         rule=lambda text: bool(_ON.search(text)),
-        mentions=_mentions_light,
+        mentions=mentions_light,
     ),
     Skill(
         intent="light_off",
         handle=lambda ctx, _text: _switch(ctx, "turn_off", OFF_REPLY),
         rule=lambda text: bool(_OFF.search(text)),
-        mentions=_mentions_light,
+        mentions=mentions_light,
     ),
 )
