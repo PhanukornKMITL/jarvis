@@ -96,9 +96,13 @@ def _known(fact: str) -> bool:
     return any(SequenceMatcher(None, fact, item["text"]).ratio() > 0.6 for item in load())
 
 
+def is_question(text: str) -> bool:
+    return bool(_QUESTION.search(text.strip()))
+
+
 def notice(text: str, endpoint: str) -> str:
     """A fact worth offering to remember in `text`, or ""."""
-    if len(text) < 6 or _QUESTION.search(text.strip()):
+    if len(text) < 6 or is_question(text):
         return ""
     out = complete([{"role": "system", "content": NOTICE_PROMPT}, {"role": "user", "content": text}],
                    endpoint, temperature=0, max_tokens=60, timeout=20)

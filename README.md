@@ -121,6 +121,11 @@ permission the first time. Press Ctrl+C to stop listening.
   and when you state a fact ("ผมมีแมวชื่อส้ม") JARVIS asks "ให้ผมจำไว้ว่า...ไหมครับ" and keeps
   it only on a yes. Stored in `work/memories.json` (never committed) with the date, and given to
   chat on every question; `[memory] enabled = false` turns it off.
+- Reminders: "เตือนผมพรุ่งนี้บ่ายสองว่าไปหาหมอฟัน", "ทุกวันสามทุ่มเตือนกินยา", "อีก 10 นาทีเตือน...",
+  "เตือนก่อนครึ่งชั่วโมง"; JARVIS reads it back and sets it on a yes, then speaks it when due.
+  "มีเตือนอะไรบ้าง", "ยกเลิกเตือนเรื่อง...", "เลื่อนอีก 10 นาที". Thai clock words are parsed by
+  code (`jarvis/reminders.py`), not the LLM. A dated plan you mention ("วันเสาร์ผมจะไปเชียงใหม่
+  ตอน 7 โมงเช้า") is offered as a reminder. Stored in `work/reminders.json`.
 - `python3 -m jarvis.bench` runs the questions in `bench/cases.toml` through the same path
   as a spoken command and scores them by category (operation: control, status, weather,
   flood, news; daily life: small talk, food, knowledge, self, memory). `--runs 3` repeats

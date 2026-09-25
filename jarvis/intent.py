@@ -21,10 +21,17 @@ class Route:
     calls: tuple[Call, ...] = ()
 
 
+def rules_fired(transcript: str, alternatives: tuple[str, ...] = ()) -> set[str]:
+    texts = (transcript, *alternatives)
+    return {skill.intent for skill in SKILLS if skill.rule and any(skill.rule(text) for text in texts)}
+
+
 def route(transcript: str, config: Config, alternatives: tuple[str, ...] = ()) -> Route:
     """`alternatives` are other transcripts of the same audio; their rules must agree."""
-    texts = (transcript, *alternatives)
-    fired = {skill.intent for skill in SKILLS if skill.rule and any(skill.rule(text) for text in texts)}
+    fired = rules_fired(transcript, alternatives)
+    if any(name.startswith("reminder") for name in fired):
+        # "เตือนให้ปิดไฟตอนสามทุ่ม" is a reminder, not a light switched now.
+        fired = {name for name in fired if name.startswith("reminder")}
     if len(fired) > 1:
         return Route(UNCLEAR)
     if fired:

@@ -23,20 +23,21 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from datetime import datetime
+from datetime import datetime, timedelta
 import urllib.request
 from pathlib import Path
 
 from .audio import BYTES_PER_SECOND, SPEECH_RMS, Microphone, rms_level
 from .config import Config
 from .dataset import Dataset
-from .intent import FALLBACK, INFO, UNCLEAR, route
+from .intent import INFO, UNCLEAR, route, rules_fired
 from .persona import apply_persona
 from .skills import BY_INTENT, Context
 from .skills.chat import stream_from
 from .skills.light import OFF_REPLY, ON_REPLY
 from .stt import SAMPLE_RATE, WhisperSTT, clean_transcript
-from . import memory, tools
+from . import memory, reminders, tools
+from .skills.remind import describe
 from .tts import Speaker, split_sentences, synthesize_f5
 from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, normalize, split_wake
 
@@ -89,6 +90,7 @@ MEMORY_PATH = LOG_PATH.with_name("conversation.json")
 """Recent turns and tool results, so a restart doesn't wipe the conversation: after one,
 "เมื่อกี้ผมพูดว่าอะไร" had nothing to go on. Expired entries are dropped when saved."""
 FACTS_KEEP_SECONDS = 3600
+REMIND_CHECK_SECONDS = 15
 
 
 def log_voice(message: str) -> None:
@@ -134,29 +136,38 @@ _YES = re.compile(r"^(?:ใช|ได|จำ|โอเค|เอา|ดี|ok)",
 
 
 def _offer_first(ctx: Context, text: str) -> str | None:
-    """"รับทราบค่ะ ให้ผมจำไว้ว่า...ไหมคะ" when a statement holds a fact worth remembering.
-    Asked by code before any chat reply: left to chat, Gemma first promised "ผมจะจำไว้ครับ"
-    or "ผมจะช่วยเตือน" with nothing saved."""
+    """"รับทราบค่ะ ให้ผมจำไว้ว่า...ไหมคะ" when a statement holds a fact worth remembering, or
+    "ให้ผมตั้งเตือน...ไว้ไหมคะ" when it is a dated plan. Asked by code before any chat reply:
+    left to chat, Gemma first promised "ผมจะจำไว้ครับ" or "ผมจะช่วยเตือน" with nothing saved."""
     if not ctx.config.memory_enabled:
         return None
     try:
         fact = memory.notice(text, ctx.config.llm_endpoint)
+        at = reminders.parse_when(text) if fact else None
+        if at and at > datetime.now():
+            what = reminders.what_of(text, ctx.config.llm_endpoint) or fact.replace("ผู้ใช้", "", 1)
+            reminder = reminders.new(what, at)
+            ctx.offers[:] = [("reminder", reminder)]
+            return f"รับทราบค่ะ ให้ผมตั้งเตือน{describe(reminder)} ไว้ไหมคะ"
     except (OSError, ValueError):
         return None
     if not fact:
         return None
-    ctx.offers[:] = [fact]
+    ctx.offers[:] = [("memory", fact)]
     return "รับทราบค่ะ ให้ผมจำไว้ว่า" + fact.replace("ผู้ใช้", "คุณ", 1) + "ไหมคะ"  # คะ last: the persona swaps it
 
 
 def _offer_reply(ctx: Context, text: str) -> str | None:
     """The answer to a pending offer, or None when the owner moved on (the offer is dropped)."""
-    fact = ctx.offers.pop()
+    kind, payload = ctx.offers.pop()
     short = normalize(text) if len(text) <= 20 else ""
     if short and _NO.search(short):
-        return "ได้ค่ะ ไม่จำค่ะ"
+        return "ได้ค่ะ ไม่จำค่ะ" if kind == "memory" else "ได้ค่ะ ไม่ตั้งเตือนค่ะ"
     if short and _YES.search(short):
-        memory.add(fact)
+        if kind == "reminder":
+            reminders.add(payload)
+            return "ตั้งเตือนไว้แล้วค่ะ"
+        memory.add(payload)
         return "จำไว้แล้วค่ะ"
     return None
 
@@ -167,7 +178,13 @@ def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple
     if ctx.offers:
         reply = _offer_reply(ctx, text)
         if reply:
-            return "memory_offer", reply, None
+            return "offer_reply", reply, None
+    if not memory.is_question(text) and not rules_fired(text, alternatives):
+        # A statement ("วันเสาร์ผมจะไปเชียงใหม่ตอน 7 โมงเช้า") first: it went to the weather
+        # tool and the plan was never offered as a reminder.
+        offer = _offer_first(ctx, text)
+        if offer:
+            return "offer", offer, None
     try:
         decided = route(text, ctx.config, alternatives)
     except (OSError, ValueError, KeyError):
@@ -179,10 +196,6 @@ def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple
         return label, _guarded(_from_tools(ctx, text, decided.calls)), LOOKUP_FILLERS
     skill = BY_INTENT[decided.intent]
     fillers = THINK_FILLERS if skill.slow else None
-    if skill.intent == FALLBACK:
-        offer = _offer_first(ctx, text)
-        if offer:
-            return "memory_offer", offer, None
     if skill.stream:
         return skill.intent, _guarded(skill.stream(ctx, text)), fillers
     if skill.slow:
@@ -250,6 +263,7 @@ class VoiceSession:
         self.f5_port = config.f5_port if config.tts_engine == "f5" else None
         self.speaker = Speaker(config.tts_voice, self.f5_port)
         self.last_turn_at = 0.0
+        self._reminded_at = 0.0
         self._load_memory()
         self._spoken: list[str] = []
         self._carry = b""
@@ -435,6 +449,9 @@ class VoiceSession:
         while True:
             window = overlap + self.mic.read(WAKE_STEP_SECONDS * BYTES_PER_SECOND)
             overlap = window[-OVERLAP_BYTES:]
+            if self._remind():
+                overlap = b""
+                continue
             rms = rms_level(window)
             if rms < SPEECH_RMS:
                 idle_ticks += 1
@@ -453,6 +470,26 @@ class VoiceSession:
             self.handle_wake(window, result.heard)
             overlap = b""
             self.wake.reset()
+
+    def _remind(self) -> bool:
+        """Speaks reminders that are due; checked every REMIND_CHECK_SECONDS while idle."""
+        if time.monotonic() - self._reminded_at < REMIND_CHECK_SECONDS:
+            return False
+        self._reminded_at = time.monotonic()
+        try:
+            due = reminders.due()
+        except (OSError, ValueError):
+            return False
+        for r in due:
+            early = r.when > datetime.now() + timedelta(minutes=1)
+            text = (f"เตือนความจำค่ะ อีก {r.lead} นาที มีเรื่อง{r.what}" if early
+                    else f"เตือนความจำค่ะ ถึงเวลา{r.what}แล้วค่ะ")
+            log_voice(f"เตือน: {r.what} ({r.at})")
+            self.ctx.fired[:] = [r.id]
+            self.say(text)
+            self.ctx.history.append(("", self.render(text)))
+            self.last_turn_at = time.monotonic()
+        return bool(due)
 
     def hear(self, pcm: bytes, need_wake: bool) -> Heard | None:
         """Transcribes an utterance; None if `need_wake` and the name isn't in it after all."""

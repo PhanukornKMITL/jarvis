@@ -21,7 +21,7 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
-from . import memory
+from . import memory, reminders
 from .config import ROOT, load_config
 from .persona import apply_persona
 from .skills.base import Context
@@ -91,7 +91,9 @@ def main() -> None:
     label = args.label or config.llm_model.stem
     # Its own long-term memory, empty each run: cases must not see or change the owner's.
     memory.PATH = RESULTS_DIR / "memories_bench.json"
-    memory.PATH.unlink(missing_ok=True)
+    reminders.PATH = RESULTS_DIR / "reminders_bench.json"
+    for path in (memory.PATH, reminders.PATH):
+        path.unlink(missing_ok=True)
     values = placeholders(config)
     cases = [(category, case) for category, case in load_cases()
              if not args.only or category.startswith(args.only)]

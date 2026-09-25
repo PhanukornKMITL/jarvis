@@ -196,7 +196,7 @@ mention = "ตลาด"
 # ---------------------------------------------------------------- daily_life: long-term memory
 [[daily_life.long_term]]
 say = "ผมมีแมวชื่อส้ม"
-route = "memory_offer"
+route = "offer"
 mention = "จำไว้ว่า.*ส้ม.*ไหม"
 [[daily_life.long_term]]
 say = ["ผมชอบกาแฟดำ", "ได้เลย", "คุณจำอะไรเกี่ยวกับผมบ้าง"]
@@ -208,7 +208,8 @@ route = "forget"
 mention = "ลืมแล้ว"
 [[daily_life.long_term]]
 say = ["พรุ่งนี้ผมมีนัดหมอฟันตอนบ่ายสอง", "ไม่ต้อง"]
-mention = "ไม่จำ"
+# A dated plan is offered as a reminder, not a memory.
+mention = "ไม่ตั้งเตือน|ไม่จำ"
 [[daily_life.long_term]]
 say = "เหนื่อยจัง วันนี้งานเยอะ"
 route = "chat"
@@ -217,3 +218,32 @@ avoid = "จำไว้"
 say = "แมวผมชื่ออะไร"
 route = "chat"
 avoid = "จำไว้ว่า"
+
+# ---------------------------------------------------------------- operation: reminders
+[[operation.reminders]]
+say = "เตือนผมพรุ่งนี้บ่ายสองว่าไปหาหมอฟัน"
+route = "reminder_set"
+mention = "หมอฟัน.*14 นาฬิกา.*ใช่ไหม"
+[[operation.reminders]]
+say = ["ตั้งเตือนทุกวันตอนสามทุ่มให้กินยา", "ใช่", "มีเตือนอะไรบ้าง"]
+route = "reminder_list"
+mention = "กินยา.*21 นาฬิกา.*ทุกวัน"
+[[operation.reminders]]
+say = "พรุ่งนี้ 10 โมง ประชุม เตือนก่อนครึ่งชั่วโมง"
+route = "reminder_set"
+mention = "10 นาฬิกา.*ก่อน 30 นาที"
+[[operation.reminders]]
+say = "เตือนให้ปิดไฟตอนสี่ทุ่ม"
+route = "reminder_set"
+mention = "ปิดไฟ.*22 นาฬิกา"
+[[operation.reminders]]
+say = ["อีก 10 นาทีเตือนให้ปิดเตา", "ใช่", "ยกเลิกเตือนเรื่องปิดเตา"]
+route = "reminder_cancel"
+mention = "ยกเลิก"
+[[operation.reminders]]
+say = "วันเสาร์ผมจะไปเชียงใหม่ตอน 7 โมงเช้า"
+route = "offer"
+mention = "ตั้งเตือน.*7 นาฬิกา"
+[[operation.reminders]]
+say = "ปภ.เตือนน้ำท่วมที่ไหนบ้าง"
+avoid = "ตั้งเตือน"
