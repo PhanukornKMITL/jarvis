@@ -94,6 +94,16 @@ def soil_words(percent: float) -> str:
     return "ดินยังชื้นดี ยังไม่ต้องรดน้ำ"
 
 
+def flood_words(total_mm: float, peak_mm: float) -> str:
+    """Rough, from rain alone: Bangkok streets tend to pond from about 30 mm in an hour or
+    60 mm in a day. There is no flood data; the words say so."""
+    if peak_mm >= 30 or total_mm >= 60:
+        return "เสี่ยงน้ำท่วมขังสูง"
+    if peak_mm >= 10 or total_mm >= 20:
+        return "ถนนบางจุดอาจมีน้ำขัง"
+    return "ฝนไม่มากพอจะทำให้น้ำท่วม"
+
+
 def thai_season(month: int, day: int) -> str:
     """Thai Meteorological Department seasons; gives the model something true to explain with."""
     if (month == 5 and day >= 15) or 6 <= month <= 9 or (month == 10 and day < 15):
@@ -147,6 +157,10 @@ def weather_facts(data: dict, day: str = "today") -> dict:
         start = next((i for i, h in enumerate(upcoming) if h["rain_mm"] >= RAIN_MM), None)
         facts["rain_starts"] = (f"ไม่มีฝนตลอด {later}" if start is None else
                                 f"ราว {when(upcoming[start])} เป็น{strongest(upcoming[start:start + 3])}")
+    total = sum(h["rain_mm"] for h in upcoming)
+    # "น้ำท่วมไหม" got an umbrella tip: there was nothing about flooding to answer from.
+    facts["flooding"] = (f"{flood_words(total, max(h['rain_mm'] for h in upcoming))} "
+                         f"(ประเมินจากปริมาณฝน {FORECAST_HOURS} ชั่วโมงข้างหน้าเท่านั้น ไม่มีข้อมูลน้ำท่วมจริง)")
     outing = upcoming[:OUTING_HOURS + 1]
     wet = [h for h in outing if h["rain_mm"] >= RAIN_MM]
     if not wet:
