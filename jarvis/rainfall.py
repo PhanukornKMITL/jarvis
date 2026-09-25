@@ -66,19 +66,22 @@ def districts(province_code: int | None = None) -> dict[str, int]:
             and (province_code is None or s["geocode"]["province_code"] == str(province_code))}
 
 
-def heavy_districts(province_code: int | None, lat: float, lon: float, district: str = "") -> list[str]:
-    """Districts whose wettest gauge had heavy rain (over 35 mm in 24 h), wettest first."""
-    wettest: dict[str, float] = {}
-    for s in _get("rain_24h"):
-        if not isinstance(s.get("rain_24h"), (int, float)) or s["rain_24h"] <= 35:
-            continue
-        g = s["geocode"]
-        name = g.get("amphoe_name", {}).get("th", "")
-        inside = (name == district if district else g.get("province_code") == str(province_code) if province_code
-                  else _km(s, lat, lon) <= NEAR_KM)
-        if inside:
-            wettest[name] = max(wettest.get(name, 0), s["rain_24h"])
-    return sorted(wettest, key=wettest.get, reverse=True)
+def _inside(station: dict, province_code: int | None, lat: float, lon: float, district: str) -> bool:
+    g = station["geocode"]
+    if district:
+        return g.get("amphoe_name", {}).get("th") == district
+    if province_code:
+        return g.get("province_code") == str(province_code)
+    return _km(station, lat, lon) <= NEAR_KM
+
+
+def heavy_spots(province_code: int | None, lat: float, lon: float, district: str = "") -> list[tuple[str, str, float]]:
+    """(tambon, district, mm) of gauges over 35 mm in 24 h, wettest first: "<อำเภอ>ท่วมบริเวณไหน"
+    got "ไม่ได้ระบุบริเวณ" while three gauges in that district had 54-90 mm."""
+    spots = [(s["geocode"]["tumbon_name"]["th"], s["geocode"]["amphoe_name"]["th"], s["rain_24h"])
+             for s in _get("rain_24h") if isinstance(s.get("rain_24h"), (int, float)) and s["rain_24h"] > 35
+             and _inside(s, province_code, lat, lon, district)]
+    return sorted(spots, key=lambda spot: -spot[2])
 
 
 def district_in(text: str) -> tuple[str, int] | None:
@@ -93,15 +96,8 @@ def district_in(text: str) -> tuple[str, int] | None:
 
 def measured(province_code: int | None, province_name: str, lat: float, lon: float, district: str = "") -> dict:
     stations = [s for s in _get("rain_24h") if isinstance(s.get("rain_24h"), (int, float))]
-    if district:
-        here = [s for s in stations if s["geocode"].get("amphoe_name", {}).get("th") == district]
-        where = f"อ.{district}"
-    elif province_code:
-        here = [s for s in stations if s["geocode"].get("province_code") == str(province_code)]
-        where = f"จ.{province_name}"
-    else:
-        here = [s for s in stations if _km(s, lat, lon) <= NEAR_KM]
-        where = f"รอบบ้าน {NEAR_KM} กม."
+    here = [s for s in stations if _inside(s, province_code, lat, lon, district)]
+    where = f"อ.{district}" if district else f"จ.{province_name}" if province_code else f"รอบบ้าน {NEAR_KM} กม."
     if not here:
         return {"rain_measured": f"ไม่มีสถานีวัดฝนใน{where}"}
     wettest = sorted(here, key=lambda s: -s["rain_24h"])[:3]

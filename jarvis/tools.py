@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
 
 from . import news, rainfall
 from .config import Config
@@ -393,6 +394,17 @@ def place_in(text: str, config: Config) -> Place:
         found = None
     if found:
         return Place(found[0], found[1], found[0])
+    # Whisper hears the home district slightly wrong (a letter dropped or swapped): accept a close
+    # match for that one name only, where a mistake costs little.
+    home = re.search(r"อำเภอ\s*(\S+)", config.profile.home_place)
+    if home:
+        name = home.group(1)
+        for word in re.findall(r"[ก-๙]{2,}", text):
+            for start in range(len(word)):
+                piece = word[start:start + len(name)]
+                if len(piece) >= len(name) - 1 and SequenceMatcher(None, piece, name).ratio() >= 0.75:
+                    code = province_code(config.profile.home_place)
+                    return Place(name, code, name)
     return Place("")
 
 
@@ -426,10 +438,22 @@ def _flood_report(ctx: Context, place: str = "") -> dict:
         known = rainfall.districts(where.province or province_code(area))
         headlines = " ".join(found.get("news") or [])
         in_news = [d for d in sorted(known, key=len, reverse=True) if len(d) >= 3 and d in headlines]
-        heavy = rainfall.heavy_districts(where.province, ctx.config.weather_lat, ctx.config.weather_lon,
-                                         where.district)
+        spots = rainfall.heavy_spots(where.province, ctx.config.weather_lat, ctx.config.weather_lon, where.district)
     except (OSError, ValueError, KeyError):
-        in_news, heavy = [], []
+        in_news, spots = [], []
+    heavy = list(dict.fromkeys(district for _, district, _ in spots))
+    # Code writes the specific summary first: Gemma mostly retells the first finding, and left
+    # alone it said "ไม่ได้ระบุบริเวณ" / "ควรตรวจสอบข้อมูลล่าสุด" with tambon readings in hand.
+    summary = []
+    if in_news:
+        summary.append("ข่าวพูดถึงน้ำท่วมใน " + ", ".join(f"อ.{d}" for d in in_news[:3]))
+    roads = [line for line in found.get("news") or [] if "ถนน" in line]
+    if roads:
+        summary.append("ข่าวเรื่องถนน: " + roads[0])
+    if spots:
+        summary.append("ฝนหนักวัดได้ที่ " + ", ".join(f"ต.{t} อ.{d} {mm:g} มม." for t, d, mm in spots[:3]))
+    if summary:
+        findings.append("สรุป: " + "; ".join(summary))
     if in_news:
         findings.append("อำเภอที่ข่าวพูดถึงเรื่องน้ำ: " + ", ".join(in_news[:6]))
     if found.get("news"):
@@ -449,8 +473,9 @@ def _flood_report(ctx: Context, place: str = "") -> dict:
     if not findings:
         return {"error": "ดึงข้อมูลน้ำท่วมไม่ได้เลยสักแหล่ง"}
     return {"place": label, "findings": findings,
-            "how_to_answer": "สรุปจากข้อแรกๆ ก่อน ถ้ามีข่าวให้บอกชื่อสำนักข่าวและเวลา ข่าวและสถานีวัดเห็นน้ำท่วมฉับพลัน"
-                             "ที่ดาวเทียมมองไม่เห็น อย่าบอกว่าไม่ท่วมเพราะดาวเทียมไม่พบ"}
+            "how_to_answer": "ตอบจากข้อ สรุป ก่อนและเจาะจง บอกชื่อตำบลหรืออำเภอและปริมาณฝนที่มี ถ้าผู้ใช้จะเดินทาง "
+                             "บอกข่าวเรื่องถนนก่อน ถ้ามีข่าวให้บอกชื่อสำนักข่าว ข่าวและสถานีวัดเห็นน้ำท่วมฉับพลัน"
+                             "ที่ดาวเทียมมองไม่เห็น อย่าบอกว่าไม่ท่วมเพราะดาวเทียมไม่พบ ห้ามบอกให้ผู้ใช้ไปตรวจสอบเอง"}
 
 
 TOOLS = (
