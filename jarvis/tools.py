@@ -19,7 +19,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 
-from . import news, rainfall
+from . import news, thaiwater
 from .config import Config
 from .llm import tool_calls
 from .skills.base import Context
@@ -360,9 +360,25 @@ def _rain_measured(ctx: Context, province: str = "") -> dict:
         return {"error": f"ไม่รู้จักพื้นที่ {province}"}
     name = province_name(where.province) if where.province else home_province(ctx.config)
     try:
-        return rainfall.measured(where.province, name, ctx.config.weather_lat, ctx.config.weather_lon, where.district)
+        return thaiwater.measured(where.province, name, ctx.config.weather_lat, ctx.config.weather_lon, where.district)
     except (OSError, ValueError, KeyError):
         return {"error": "ดึงข้อมูลฝนจากสถานีวัดของ ThaiWater ไม่ได้"}
+
+
+def _water_level(ctx: Context, place: str = "") -> dict:
+    where = place_in(place, ctx.config) if place else Place("")
+    if place and not where.name:
+        # "อ่างเก็บน้ำประแสร์" names a dam, not a place.
+        named = [line for line in thaiwater.dams(None) if re.sub(r"^(?:เขื่อน|อ่างเก็บน้ำ|อ่าง)", "", place) in line]
+        return {"dams": named} if named else {"error": f"ไม่รู้จักพื้นที่หรือเขื่อน {place}"}
+    try:
+        result = thaiwater.water_levels(where.province, ctx.config.weather_lat, ctx.config.weather_lon, where.district)
+        reservoirs = thaiwater.dams(where.province or province_code(ctx.config.profile.home_place))
+    except (OSError, ValueError, KeyError):
+        return {"error": "ดึงข้อมูลระดับน้ำจาก ThaiWater ไม่ได้"}
+    if reservoirs:
+        result["dams"] = reservoirs
+    return result
 
 
 def _news(_ctx: Context, query: str = "") -> dict:
@@ -389,7 +405,7 @@ def place_in(text: str, config: Config) -> Place:
     if code:
         return Place(province_name(code), code)
     try:
-        found = rainfall.district_in(text)
+        found = thaiwater.district_in(text)
     except (OSError, ValueError, KeyError):
         found = None
     if found:
@@ -417,7 +433,9 @@ def _flood_report(ctx: Context, place: str = "") -> dict:
     label = f"อ.{where.district}" if where.district else (f"จ.{where.name}" if where.name else "แถวบ้าน")
     jobs = {
         "news": lambda: [line for line in news.headlines(f"{area} น้ำท่วม") if "ท่วม" in line or "น้ำ" in line],
-        "gauges": lambda: rainfall.measured(where.province, province_name(where.province) if where.province else area,
+        "rivers": lambda: thaiwater.water_levels(where.province, ctx.config.weather_lat, ctx.config.weather_lon,
+                                                 where.district),
+        "gauges": lambda: thaiwater.measured(where.province, province_name(where.province) if where.province else area,
                                             ctx.config.weather_lat, ctx.config.weather_lon, where.district),
     }
     if ctx.config.gistda_api_key:
@@ -435,10 +453,10 @@ def _flood_report(ctx: Context, place: str = "") -> dict:
     findings = []
     # "ท่วมตรงไหน" after a report of "ชลบุรี-ระยอง" got "ข้อมูลไม่ได้ระบุ": name the districts.
     try:
-        known = rainfall.districts(where.province or province_code(area))
+        known = thaiwater.districts(where.province or province_code(area))
         headlines = " ".join(found.get("news") or [])
         in_news = [d for d in sorted(known, key=len, reverse=True) if len(d) >= 3 and d in headlines]
-        spots = rainfall.heavy_spots(where.province, ctx.config.weather_lat, ctx.config.weather_lon, where.district)
+        spots = thaiwater.heavy_spots(where.province, ctx.config.weather_lat, ctx.config.weather_lon, where.district)
     except (OSError, ValueError, KeyError):
         in_news, spots = [], []
     heavy = list(dict.fromkeys(district for _, district, _ in spots))
@@ -450,6 +468,10 @@ def _flood_report(ctx: Context, place: str = "") -> dict:
     roads = [line for line in found.get("news") or [] if "ถนน" in line]
     if roads:
         summary.append("ข่าวเรื่องถนน: " + roads[0])
+    rivers = (found.get("rivers") or {}).get("water_level")
+    urgent = [line for line in rivers if "ตลิ่ง" in line] if isinstance(rivers, list) else []
+    if urgent:
+        summary.append("ระดับน้ำ: " + " / ".join(urgent[:2]))
     if spots:
         summary.append("ฝนหนักวัดได้ที่ " + ", ".join(f"ต.{t} อ.{d} {mm:g} มม." for t, d, mm in spots[:3]))
     if summary:
@@ -466,6 +488,8 @@ def _flood_report(ctx: Context, place: str = "") -> dict:
         findings.append("สถานีวัดฝน: " + gauges["rain_measured"])
     if heavy:
         findings.append("อำเภอที่ฝนหนัก (เกิน 35 มม. ใน 24 ชม.): " + ", ".join(heavy[:6]))
+    if isinstance(rivers, list) and rivers:
+        findings.append("สถานีวัดระดับน้ำ: " + " / ".join(rivers[:3]))
     if found.get("satellite"):
         findings.append("ดาวเทียม GISTDA: " + " ".join(str(v) for v in found["satellite"].values()))
     if found.get("forecast"):
@@ -485,12 +509,15 @@ TOOLS = (
     Tool("get_garden", "เซ็นเซอร์ต้นไม้: ความชื้นดิน อุณหภูมิ ต้องรดน้ำไหม", _garden),
     Tool("get_devices", "สถานะอุปกรณ์ในบ้าน เช่น ไฟเปิดหรือปิดอยู่ ออนไลน์ครบไหม", _devices),
     Tool("get_datetime", "วันที่และเวลาตอนนี้", _datetime),
-    Tool("get_flood_report", "สถานการณ์น้ำท่วม: รวมข่าว ประกาศเตือน สถานีวัดฝน ดาวเทียม และพยากรณ์ "
+    Tool("get_flood_report", "สถานการณ์น้ำท่วม: รวมข่าว ประกาศเตือน ระดับน้ำ สถานีวัดฝน ดาวเทียม และพยากรณ์ "
          "แถวบ้าน หรือจังหวัด/อำเภอที่ถาม", _flood_report,
          {"place": {"type": "string", "description": "จังหวัดหรืออำเภอที่ถาม เว้นว่างถ้าถามแถวบ้าน"}}),
     Tool("get_rain_measured", "ฝนที่ตกจริงจากสถานีวัดฝนใน 24 ชั่วโมงที่ผ่านมา เมื่อวานฝนหนักแค่ไหน "
          "แถวบ้านหรือในจังหวัด/อำเภอที่ถาม", _rain_measured,
          {"province": {"type": "string", "description": "จังหวัดหรืออำเภอที่ถาม เว้นว่างถ้าถามแถวบ้าน"}}),
+    Tool("get_water_level", "ระดับน้ำในแม่น้ำและคลองจากสถานีวัด ใกล้ล้นตลิ่งไหม กำลังขึ้นหรือลด และน้ำในเขื่อน"
+         "หรืออ่างเก็บน้ำ แถวบ้านหรือในจังหวัด/อำเภอที่ถาม", _water_level,
+         {"place": {"type": "string", "description": "จังหวัดหรืออำเภอที่ถาม เว้นว่างถ้าถามแถวบ้าน"}}),
     Tool("get_news", "หัวข่าวล่าสุดของไทยใน 2 วัน ค้นตามคำสำคัญ หรือข่าวเด่นถ้าไม่ระบุ", _news,
          {"query": {"type": "string", "description": "คำค้น เช่น ระยอง น้ำท่วม เว้นว่างถ้าขอข่าวเด่น"}}),
 )

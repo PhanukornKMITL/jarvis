@@ -65,8 +65,8 @@ python3 -m jarvis.cli light-off
 Everything runs on the Mac: whisper.cpp for Thai speech-to-text, Gemma through
 `llama-server` for understanding and chat, and F5-TTS (or the local `say` voice) for
 replies. Microphone audio and conversations never leave the machine. Read-only tools
-fetch public data: the forecast (coordinates to api.open-meteo.com), rain gauges and
-flash-flood warnings (ThaiWater, no key), satellite flood maps (GISTDA, key in
+fetch public data: the forecast (coordinates to api.open-meteo.com), rain gauges, river levels,
+dams and flash-flood warnings (ThaiWater, no key), satellite flood maps (GISTDA, key in
 `secrets.toml`) and headlines (Google News RSS, the search words only).
 Models download once into the ignored `.models/` folder.
 
