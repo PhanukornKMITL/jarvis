@@ -3,10 +3,10 @@ Read-only information (weather, garden, devices, time) lives in jarvis/tools.py 
 
 from __future__ import annotations
 
-from . import chat, light, recall
+from . import chat, light, recall, remember
 from .base import Context, Skill
 
-MODULES = (light, recall, chat)
+MODULES = (light, recall, remember, chat)
 SKILLS: tuple[Skill, ...] = tuple(skill for module in MODULES for skill in module.SKILLS)
 BY_INTENT = {skill.intent: skill for skill in SKILLS}
 

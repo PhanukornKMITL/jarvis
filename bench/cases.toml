@@ -192,3 +192,28 @@ mention = "ยังไม่มี|เพิ่งเริ่ม"
 [[daily_life.memory]]
 say = ["ผมจะไปตลาดตอนเย็น", "ตะกี้ผมบอกว่าจะไปไหน"]
 mention = "ตลาด"
+
+# ---------------------------------------------------------------- daily_life: long-term memory
+[[daily_life.long_term]]
+say = "ผมมีแมวชื่อส้ม"
+route = "memory_offer"
+mention = "จำไว้ว่า.*ส้ม.*ไหม"
+[[daily_life.long_term]]
+say = ["ผมชอบกาแฟดำ", "ได้เลย", "คุณจำอะไรเกี่ยวกับผมบ้าง"]
+route = "memories"
+mention = "กาแฟดำ"
+[[daily_life.long_term]]
+say = ["จำไว้ว่าผมไม่ดื่มแอลกอฮอล์", "ลืมเรื่องแอลกอฮอล์ไป"]
+route = "forget"
+mention = "ลืมแล้ว"
+[[daily_life.long_term]]
+say = ["พรุ่งนี้ผมมีนัดหมอฟันตอนบ่ายสอง", "ไม่ต้อง"]
+mention = "ไม่จำ"
+[[daily_life.long_term]]
+say = "เหนื่อยจัง วันนี้งานเยอะ"
+route = "chat"
+avoid = "จำไว้"
+[[daily_life.long_term]]
+say = "แมวผมชื่ออะไร"
+route = "chat"
+avoid = "จำไว้ว่า"

@@ -30,13 +30,13 @@ from pathlib import Path
 from .audio import BYTES_PER_SECOND, SPEECH_RMS, Microphone, rms_level
 from .config import Config
 from .dataset import Dataset
-from .intent import INFO, UNCLEAR, route
+from .intent import FALLBACK, INFO, UNCLEAR, route
 from .persona import apply_persona
 from .skills import BY_INTENT, Context
 from .skills.chat import stream_from
 from .skills.light import OFF_REPLY, ON_REPLY
 from .stt import SAMPLE_RATE, WhisperSTT, clean_transcript
-from . import tools
+from . import memory, tools
 from .tts import Speaker, split_sentences, synthesize_f5
 from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, normalize, split_wake
 
@@ -128,11 +128,46 @@ def _from_tools(ctx: Context, text: str, calls: tuple[tools.Call, ...]) -> Itera
 
 
 Fillers = tuple[str, ...] | None
+# Matched against normalize()d text, which drops tone marks (ไม่ → ไม, ใช่ → ใช).
+_NO = re.compile(r"^(?:ไม|อยา)")
+_YES = re.compile(r"^(?:ใช|ได|จำ|โอเค|เอา|ดี|ok)", re.IGNORECASE)
+
+
+def _offer_first(ctx: Context, text: str) -> str | None:
+    """"รับทราบค่ะ ให้ผมจำไว้ว่า...ไหมคะ" when a statement holds a fact worth remembering.
+    Asked by code before any chat reply: left to chat, Gemma first promised "ผมจะจำไว้ครับ"
+    or "ผมจะช่วยเตือน" with nothing saved."""
+    if not ctx.config.memory_enabled:
+        return None
+    try:
+        fact = memory.notice(text, ctx.config.llm_endpoint)
+    except (OSError, ValueError):
+        return None
+    if not fact:
+        return None
+    ctx.offers[:] = [fact]
+    return "รับทราบค่ะ ให้ผมจำไว้ว่า" + fact.replace("ผู้ใช้", "คุณ", 1) + "ไหมคะ"  # คะ last: the persona swaps it
+
+
+def _offer_reply(ctx: Context, text: str) -> str | None:
+    """The answer to a pending offer, or None when the owner moved on (the offer is dropped)."""
+    fact = ctx.offers.pop()
+    short = normalize(text) if len(text) <= 20 else ""
+    if short and _NO.search(short):
+        return "ได้ค่ะ ไม่จำค่ะ"
+    if short and _YES.search(short):
+        memory.add(fact)
+        return "จำไว้แล้วค่ะ"
+    return None
 
 
 def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str], Fillers]:
     """Returns (what was decided, reply, fillers to use if it is slow). Slow replies are lazy
     iterators, so tools and the LLM run while a filler plays; the rest is finished text."""
+    if ctx.offers:
+        reply = _offer_reply(ctx, text)
+        if reply:
+            return "memory_offer", reply, None
     try:
         decided = route(text, ctx.config, alternatives)
     except (OSError, ValueError, KeyError):
@@ -144,6 +179,10 @@ def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple
         return label, _guarded(_from_tools(ctx, text, decided.calls)), LOOKUP_FILLERS
     skill = BY_INTENT[decided.intent]
     fillers = THINK_FILLERS if skill.slow else None
+    if skill.intent == FALLBACK:
+        offer = _offer_first(ctx, text)
+        if offer:
+            return "memory_offer", offer, None
     if skill.stream:
         return skill.intent, _guarded(skill.stream(ctx, text)), fillers
     if skill.slow:

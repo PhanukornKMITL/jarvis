@@ -17,8 +17,10 @@ class Context:
     history: list[tuple[str, str]] = field(default_factory=list)
     """Recent (user said, JARVIS replied) turns of the current conversation, oldest first."""
     facts: dict[str, tuple[float, str]] = field(default_factory=dict)
-    """Latest (time.time(), result line) of each tool, kept in memory only, so "ทำไม" after
-    a forecast, or "จะไปกินข้าวข้างนอก" later, can still use it."""
+    """Latest (time.time(), result line) of each tool, so "ทำไม" after a forecast, or
+    "จะไปกินข้าวข้างนอก" later, can still use it."""
+    offers: list[str] = field(default_factory=list)
+    """A fact JARVIS just offered to remember, waiting for the owner's yes or no."""
 
     def devices(self) -> list[dict]:
         return asyncio.run(request(self.host, self.port, {"type": "status"})).get("devices", [])

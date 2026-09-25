@@ -65,6 +65,12 @@ speaker_threshold = 0.30
 # lower (a real one scored 0.24). Echo is also caught by comparing with JARVIS's last words.
 speaker_follow_up_threshold = 0.20
 
+[memory]
+# Facts about you kept across days, like ChatGPT's memory: "จำไว้ว่า...", or say yes when
+# JARVIS offers "ให้ผมจำไว้ไหมครับว่า...". Stored only in work/memories.json until you say
+# "ลืม..." ("ลืมทั้งหมด" clears it). false stops using and offering it (the file is kept).
+enabled = true
+
 [persona]
 # "male" → replies end with ครับ, "female" → ค่ะ. Match the TTS voice.
 gender = "male"

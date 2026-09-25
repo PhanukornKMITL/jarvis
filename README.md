@@ -117,6 +117,10 @@ permission the first time. Press Ctrl+C to stop listening.
   `[gistda] api_key` in the git-ignored `secrets.toml`) and the forecast. Places are found in
   the question itself, provinces and districts alike. Put your home in `profile.toml`
   `[home] lat, lon, place`, not in the committed `config.toml`.
+- Long-term memory, like ChatGPT's: "จำไว้ว่า...", "ลืมเรื่อง...", "คุณจำอะไรเกี่ยวกับผมบ้าง",
+  and when you state a fact ("ผมมีแมวชื่อส้ม") JARVIS asks "ให้ผมจำไว้ว่า...ไหมครับ" and keeps
+  it only on a yes. Stored in `work/memories.json` (never committed) with the date, and given to
+  chat on every question; `[memory] enabled = false` turns it off.
 - `python3 -m jarvis.bench` runs the questions in `bench/cases.toml` through the same path
   as a spoken command and scores them by category (operation: control, status, weather,
   flood, news; daily life: small talk, food, knowledge, self, memory). `--runs 3` repeats

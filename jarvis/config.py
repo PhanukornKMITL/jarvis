@@ -58,6 +58,8 @@ class Config:
     speaker_threshold: float = 0.30
     speaker_follow_up_threshold: float = 0.20
     remember_across_restarts: bool = True
+    memory_enabled: bool = True
+    """Long-term memory in work/memories.json ([memory] enabled)."""
     """Keep the last 30 minutes of conversation in work/conversation.json ([voice])."""
     weather_lat: float = 13.7563
     weather_lon: float = 100.5018
@@ -104,7 +106,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
     weather, dataset = data.get("weather", {}), data.get("dataset", {})
     run, dashboard = data.get("run", {}), data.get("dashboard", {})
     f5, persona, voice = tts.get("f5", {}), data.get("persona", {}), data.get("voice", {})
-    optimize = data.get("optimize", {})
+    optimize, memory = data.get("optimize", {}), data.get("memory", {})
     default = Config()
     dataset_dir = ROOT / dataset["dir"] if "dir" in dataset else default.dataset_dir
     return _at_home(Config(
@@ -132,6 +134,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
         speaker_threshold=float(voice.get("speaker_threshold", default.speaker_threshold)),
         speaker_follow_up_threshold=float(voice.get("speaker_follow_up_threshold", default.speaker_follow_up_threshold)),
         remember_across_restarts=bool(voice.get("remember_across_restarts", default.remember_across_restarts)),
+        memory_enabled=bool(memory.get("enabled", default.memory_enabled)),
         weather_lat=float(weather.get("lat", default.weather_lat)),
         weather_lon=float(weather.get("lon", default.weather_lon)),
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,

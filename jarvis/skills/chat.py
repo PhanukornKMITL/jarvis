@@ -6,6 +6,7 @@ import time
 from collections.abc import Iterator
 
 from ..llm import complete, stream
+from .. import memory
 from ..persona import particle, pronoun
 from .base import Context, Skill
 
@@ -37,7 +38,9 @@ CHAT_SYSTEM = (
     # Asked where its data came from, it said "ชุดข้อมูลที่ถูกฝึกฝนมา" about a live forecast.
     "ที่มาของข้อมูลของคุณ: พยากรณ์อากาศจาก Open-Meteo, ฝนที่ตกจริง ระดับน้ำ เขื่อน และประกาศเตือนจาก ThaiWater, "
     "น้ำท่วมจากดาวเทียม GISTDA, หัวข่าวจาก Google News, อุปกรณ์และต้นไม้จากเซ็นเซอร์ในบ้าน, วันเวลาจากนาฬิกาเครื่อง "
-    "ส่วนความรู้ทั่วไปมาจากสิ่งที่โมเดลเรียนมาซึ่งอาจไม่ใช่ข้อมูลล่าสุด"
+    "ส่วนความรู้ทั่วไปมาจากสิ่งที่โมเดลเรียนมาซึ่งอาจไม่ใช่ข้อมูลล่าสุด "
+    # It said "ผมจะจำไว้ครับ" / "ผมจะช่วยเตือนนัด" with nothing saved and no reminders.
+    "ห้ามสัญญาว่าจะจำหรือจะเตือน ระบบจะถามผู้ใช้เองว่าให้จำไหม และคุณตั้งเตือนล่วงหน้าไม่ได้"
 )
 # Always in the prompt, so llama-server reuses it from cache; only the data itself is new
 # tokens (reading ~400 new tokens took ~1.3 s of every weather answer).
@@ -82,6 +85,10 @@ def _profile_context(ctx: Context) -> str:
         facts.append(profile.about)
     if profile.interests:
         facts.append("สนใจ " + ", ".join(profile.interests))
+    if ctx.config.memory_enabled:
+        remembered = memory.prompt_lines()
+        if remembered:
+            facts.append("สิ่งที่ผู้ใช้ให้จำไว้: " + "; ".join(remembered))
     context = ""
     if facts:
         context += ("\nข้อมูลผู้ใช้ที่บันทึกไว้: " + "; ".join(facts)
