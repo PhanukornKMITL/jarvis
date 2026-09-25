@@ -117,6 +117,10 @@ permission the first time. Press Ctrl+C to stop listening.
   `[gistda] api_key` in the git-ignored `secrets.toml`) and the forecast. Places are found in
   the question itself, provinces and districts alike. Put your home in `profile.toml`
   `[home] lat, lon, place`, not in the committed `config.toml`.
+- `python3 -m jarvis.bench` runs the questions in `bench/cases.toml` through the same path
+  as a spoken command and scores them by category (operation: control, status, weather,
+  flood, news; daily life: small talk, food, knowledge, self, memory). `--runs 3` repeats
+  each case, `--endpoint` tests another llama-server; results land in `work/bench/`.
 - Every voice command's audio, transcripts and outcome are saved locally under
   `work/dataset/` for measuring and training later (`[dataset] enabled = false`
   turns this off).

@@ -1,0 +1,183 @@
+# JARVIS benchmark: real questions (mostly from work/dataset voice logs) with what must happen.
+# Run: python3 -m jarvis.bench [--runs 3] [--only operation.routing]
+#
+# Each case: say = what the user said (as Whisper wrote it). A list of strings is one
+# conversation; checks apply to the last reply.
+#   route    = "light_on" | "light_off" | "unclear" | "chat" | "info"
+#   tools    = tool names that must be called (info route), e.g. ["get_weather"]
+#   mention  = regex the reply must match;  avoid = regex it must not match
+#   age_min  = minutes to age earlier tool results by, between turns (memory cases)
+# {name}, {home_district}, {home_province} come from profile.toml, so nothing personal is committed.
+
+# ---------------------------------------------------------------- operation: control
+[[operation.control]]
+say = "เปิดไฟให้หน่อย"
+route = "light_on"
+[[operation.control]]
+say = "ปิดไฟที"
+route = "light_off"
+[[operation.control]]
+say = "จาร์วิสเปิดไฟ"
+route = "light_on"
+[[operation.control]]
+say = "บริฟัยให้น้อย"
+route = "unclear"
+[[operation.control]]
+say = "ขึ้นมา ใช่ไหม"
+route = "chat"
+
+# ---------------------------------------------------------------- operation: status
+[[operation.status]]
+say = "ไฟเปิดอยู่ไหม"
+tools = ["get_devices"]
+[[operation.status]]
+say = "เช็คสถานน้ำไฟ"
+tools = ["get_devices"]
+[[operation.status]]
+say = "อุปกรณ์ออนไลน์ครบไหม"
+tools = ["get_devices"]
+[[operation.status]]
+say = "ต้องรดน้ำต้นไม้ไหม"
+tools = ["get_garden"]
+[[operation.status]]
+say = "เช็ค คอมมูล การ์เดน"
+tools = ["get_garden"]
+[[operation.status]]
+say = "อืม สำคัญ ตอนนี้กี่โมงแล้ว"
+tools = ["get_datetime"]
+[[operation.status]]
+say = "วันจันทร์สี่อะไร"
+tools = ["get_datetime"]
+
+# ---------------------------------------------------------------- operation: weather
+[[operation.weather]]
+say = "เมื่อไหร่ฝนจะหยุด"
+tools = ["get_weather"]
+avoid = "หนักขึ้น"
+[[operation.weather]]
+say = "วันนี้ ฟนจะตกหมาย"
+tools = ["get_weather"]
+[[operation.weather]]
+say = "พรุ่งนี้เช้าฝนตกไหม"
+tools = ["get_weather"]
+[[operation.weather]]
+say = "ควรตากผ้าไหม"
+tools = ["get_weather"]
+[[operation.weather]]
+say = "เมื่อวานฝนตกหนักแค่ไหน"
+tools = ["get_rain_measured"]
+
+# ---------------------------------------------------------------- operation: water & flood
+[[operation.flood]]
+say = "น้ำท่วมไหม"
+tools = ["get_flood_report"]
+avoid = "ไม่มีน้ำท่วม|ไม่ท่วม"
+[[operation.flood]]
+say = "ปลวกแดงน้ำท่วมไหม"
+tools = ["get_flood_report"]
+mention = "ปลวกแดง"
+[[operation.flood]]
+say = "อำเภอ{home_district}น้ำท่วมด้วยเหรอ บริเวณไหนพอจะรู้ไหม"
+tools = ["get_flood_report"]
+mention = "ต\\.|ตำบล|อ\\.|อำเภอ"
+avoid = "ตรวจสอบ"
+[[operation.flood]]
+say = "คลองแถวบ้านน้ำจะล้นไหม"
+tools = ["get_water_level"]
+mention = "ตลิ่ง|ระดับน้ำ"
+[[operation.flood]]
+say = "อ่างเก็บน้ำประแสร์น้ำเยอะไหม"
+tools = ["get_water_level"]
+mention = "%|เปอร์เซ็นต์"
+[[operation.flood]]
+say = "ข่าวน้ำท่วมกรุงเทพล่าสุด"
+tools = ["get_flood_report"]
+
+# ---------------------------------------------------------------- operation: news
+[[operation.news]]
+say = "มีข่าวอะไรน่าสนใจบ้าง"
+tools = ["get_news"]
+
+# ---------------------------------------------------------------- daily_life: small talk
+[[daily_life.small_talk]]
+say = "ขอบคุณครับ"
+route = "chat"
+avoid = "ขออภัย|ในฐานะ AI"
+[[daily_life.small_talk]]
+say = "เล่าเรื่องตลกหน่อย"
+route = "chat"
+[[daily_life.small_talk]]
+say = "เหนื่อยจัง วันนี้งานเยอะ"
+route = "chat"
+avoid = "ในฐานะ AI|ขอเช็ค"
+[[daily_life.small_talk]]
+say = "คุณคิดยังไงกับ AI"
+route = "chat"
+avoid = "ในฐานะ AI|ไม่มีความคิด"
+
+# ---------------------------------------------------------------- daily_life: food
+[[daily_life.food]]
+say = "กินอะไรดี"
+route = "chat"
+avoid = "หมู|ไก่|กุ้ง|ปลา(?!ร้าเจ)|น้ำปลา|หอยนางรม|กะปิ|เนื้อวัว"
+[[daily_life.food]]
+say = "ต้มยำทำยังไง"
+route = "chat"
+avoid = "กุ้งสด|ใส่กุ้ง|(?<!แทน)น้ำปลา(?!.{0,6}แทน)"
+[[daily_life.food]]
+say = "แนะนำเมนูผัดกะเพราหน่อย"
+route = "chat"
+avoid = "หมูสับ|ไก่สับ|(?<!แทน)น้ำปลา(?!.{0,6}แทน)|(?<!แทน)ซอสหอยนางรม"
+
+# ---------------------------------------------------------------- daily_life: knowledge
+[[daily_life.knowledge]]
+say = "ทำไมฟ้าสีฟ้า"
+route = "chat"
+mention = "กระเจิง|กระจาย"
+[[daily_life.knowledge]]
+say = "ESP32 ต่อกับ LED ยังไง"
+route = "chat"
+mention = "GPIO|ขา|ตัวต้านทาน"
+
+# ---------------------------------------------------------------- daily_life: self (honesty, identity)
+[[daily_life.self]]
+say = "คุณเข้าถึงอินเทอร์เน็ตได้ไหม"
+route = "chat"
+# True answer: only through its tools (forecast, water data, news), no general browsing.
+mention = "ไม่|แค่|เฉพาะ|พยากรณ์|ข่าว"
+avoid = "ทุกเว็บ|ค้นหาได้ทุก|ท่องเว็บได้"
+[[daily_life.self]]
+say = "ผมชื่ออะไร"
+mention = "{name}"
+[[daily_life.self]]
+say = "ผมอยู่ที่ไหน"
+mention = "{home_district}|บ้าน"
+[[daily_life.self]]
+say = ["เมื่อไหร่ฝนจะหยุด", "คุณข้อมูลมาจากไหน"]
+mention = "Open-Meteo|พยากรณ์"
+avoid = "ฝึกฝน|ชุดข้อมูลที่"
+
+# ---------------------------------------------------------------- daily_life: memory & context
+[[daily_life.memory]]
+say = ["ฝนตกไหม", "จะไปหาอะไรกินข้างนอก กินอะไรดี"]
+age_min = 10
+mention = "ร่ม|ฝน"
+[[daily_life.memory]]
+say = ["ฝนตกไหม", "เล่นกีตาร์เพลงอะไรดี"]
+age_min = 10
+avoid = "ร่ม|ฝน"
+[[daily_life.memory]]
+say = ["ฝนตกไหม", "ESP32 ต่อกับ LED ยังไง"]
+age_min = 10
+avoid = "ร่ม|ฝน"
+[[daily_life.memory]]
+say = ["ผมกำลังทำโปรเจกต์ ESP32 รดน้ำต้นไม้อัตโนมัติ", "โปรเจกต์ที่ผมบอกเมื่อกี้ ควรใช้เซ็นเซอร์อะไรดี"]
+age_min = 10
+mention = "ความชื้น"
+[[daily_life.memory]]
+say = ["เมื่อไหร่ฝนจะหยุด", "ตกนานมากเลยเหรอ", "ทำไม"]
+mention = "ฤดูฝน|มรสุม"
+avoid = "ความกดอากาศต่ำ"
+[[daily_life.memory]]
+say = "เย็นนี้จะออกไปวิ่งดีไหม"
+tools = ["get_weather"]
