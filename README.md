@@ -45,7 +45,7 @@ python3 -m jarvis.run
 python3 -m jarvis.server
 python3 -m jarvis.fake_esp
 python3 -m jarvis.fake_esp --kind garden
-llama-server -m .models/qwen2-7b-instruct-q4_k_m.gguf --port 8080 -c 4096 -ngl 99
+llama-server -m .models/gemma-4-E4B-it-Q4_K_M.gguf --port 8080 -c 4096 -ngl 99 --chat-template-kwargs '{"enable_thinking":false}'
 python3 -m jarvis.cli voice
 ```
 
@@ -84,12 +84,14 @@ python convert-h5-to-ggml.py .models/thonburian-medium-hf path/to/openai-whisper
 whisper-quantize /tmp/thon/ggml-model.bin .models/ggml-thonburian-medium-q5_0.bin q5_0
 ```
 
-Local LLM (Qwen2-7B-Instruct, ~4.7 GB) for intents and free-form questions:
+Local LLM (Gemma 4 E4B, ~5 GB) for intents and free-form questions. It replaced
+Qwen2-7B after a side-by-side test on real prompts: same intent accuracy, more natural
+Thai. Keep its thinking mode off (`[llm] args` in `config.toml`) or replies come back empty:
 
 ```sh
-curl -L -o .models/qwen2-7b-instruct-q4_k_m.gguf \
-  https://huggingface.co/Qwen/Qwen2-7B-Instruct-GGUF/resolve/main/qwen2-7b-instruct-q4_k_m.gguf
-llama-server -m .models/qwen2-7b-instruct-q4_k_m.gguf --port 8080 -c 4096 -ngl 99
+curl -L -o .models/gemma-4-E4B-it-Q4_K_M.gguf \
+  https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf
+llama-server -m .models/gemma-4-E4B-it-Q4_K_M.gguf --port 8080 -c 4096 -ngl 99 --chat-template-kwargs '{"enable_thinking":false}'
 ```
 
 Speak in one breath ("จาวิส ปิดไฟที", "เฮ้ จาวิส วันนี้ฝนจะตกไหม",

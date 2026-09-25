@@ -30,11 +30,13 @@ class Profile:
 class Config:
     profile: Profile = Profile()
     wake_model: Path = ROOT / ".models" / "ggml-base.bin"
-    command_model: Path = ROOT / ".models" / "ggml-small.bin"
+    command_model: Path = ROOT / ".models" / "ggml-thonburian-medium-q5_0.bin"
     wake_port: int = 8768
     command_port: int = 8769
     llm_endpoint: str = "http://127.0.0.1:8080"
     llm_model: Path = ROOT / ".models" / "qwen2-7b-instruct-q4_k_m.gguf"
+    llm_args: tuple[str, ...] = ()
+    """Extra llama-server arguments for the model ([llm] args)."""
     fake_devices: tuple[str, ...] = ("light", "garden")
     autostart_voice: bool = True
     dashboard_host: str = "127.0.0.1"
@@ -93,6 +95,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
         command_port=int(stt.get("command_port", default.command_port)),
         llm_endpoint=llm.get("endpoint", default.llm_endpoint),
         llm_model=ROOT / llm["model"] if "model" in llm else default.llm_model,
+        llm_args=tuple(str(arg) for arg in llm.get("args", default.llm_args)),
         fake_devices=tuple(run.get("fake_devices", default.fake_devices)),
         autostart_voice=bool(run.get("autostart_voice", default.autostart_voice)),
         dashboard_host=str(dashboard.get("host", default.dashboard_host)),

@@ -14,9 +14,13 @@ wake_port = 8768
 command_port = 8769
 
 [llm]
-# OpenAI-compatible chat endpoint (llama-server running Qwen).
+# OpenAI-compatible chat endpoint (llama-server).
 endpoint = "http://127.0.0.1:8080"
-model = ".models/qwen2-7b-instruct-q4_k_m.gguf"
+# Gemma 4 E4B won the 2026-09-25 comparison on natural Thai replies with the same intent
+# accuracy as Qwen2-7B. Its thinking mode must be off or replies come back empty.
+# To go back: model = ".models/qwen2-7b-instruct-q4_k_m.gguf" and args = [].
+model = ".models/gemma-4-E4B-it-Q4_K_M.gguf"
+args = ["--chat-template-kwargs", '{"enable_thinking":false}']
 
 [run]
 fake_devices = ["light", "garden"] # Remove when using real ESP32 devices.

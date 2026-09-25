@@ -103,7 +103,7 @@ class Supervisor:
         py = sys.executable
         self.services: dict[str, Service] = {
             "llm": Service("llm", "โมเดลภาษา", ["llama-server", "-m", str(config.llm_model),
-                        "--port", str(llm_port), "-c", "4096", "-ngl", "99"], llm_port,
+                        "--port", str(llm_port), "-c", "4096", "-ngl", "99", *config.llm_args], llm_port,
                         lambda: llm_healthy(llm_port)),
             "server": Service("server", "เซิร์ฟเวอร์อุปกรณ์", [py, "-m", "jarvis.server"], 8765,
                               lambda: port_open(8765)),
