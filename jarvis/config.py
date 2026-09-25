@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.toml"
 PROFILE_PATH = ROOT / "profile.toml"
+SECRETS_PATH = ROOT / "secrets.toml"
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,8 @@ class Config:
     weather_lon: float = 100.5018
     dataset_dir: Path | None = ROOT / "work" / "dataset"
     quit_apps: tuple[str, ...] = ("ChatGPT", "Codex")
+    gistda_api_key: str = ""
+    """From the git-ignored secrets.toml; without it the flood tool is not offered."""
 
 
 def load_profile(path: Path = PROFILE_PATH) -> Profile:
@@ -76,9 +79,15 @@ def load_profile(path: Path = PROFILE_PATH) -> Profile:
     )
 
 
-def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> Config:
+def load_secrets(path: Path = SECRETS_PATH) -> dict:
+    return tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
+                secrets_path: Path = SECRETS_PATH) -> Config:
+    gistda_key = str(load_secrets(secrets_path).get("gistda", {}).get("api_key", ""))
     if not path.is_file():
-        return Config(profile=load_profile(profile_path))
+        return Config(profile=load_profile(profile_path), gistda_api_key=gistda_key)
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     stt, llm, tts = data.get("stt", {}), data.get("llm", {}), data.get("tts", {})
     weather, dataset = data.get("weather", {}), data.get("dataset", {})
@@ -115,4 +124,5 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH) -> 
         weather_lon=float(weather.get("lon", default.weather_lon)),
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,
         quit_apps=tuple(optimize.get("quit_apps", default.quit_apps)),
+        gistda_api_key=gistda_key,
     )

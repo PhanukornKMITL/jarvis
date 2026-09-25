@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .config import Config
 from .llm import tool_calls
 from .skills.base import Context
 
@@ -34,12 +35,15 @@ FORECAST_CACHE_SECONDS = 600
 DRY_SOIL_PERCENT = 30
 # Going out needs the weather even when the question is about something else. Gemma missed
 # it in "จะไปหาอะไรกินข้างนอก กินอะไรดี" 3/3 (topic: food), so code adds it.
+# Flooding needs both halves: satellite floods (get_flood) miss street ponding, which only the
+# rain forecast can estimate. "น้ำท่วมไหม" alone got no tool at all ("ที่ไหนครับ?").
+_FLOODING = re.compile(r"ท่วม|น้ำขัง|น้ำรอการระบาย")
 _GOING_OUT = re.compile(r"ข้างนอก|นอกบ้าน|ออกไป|ออกจากบ้าน|ไปเที่ยว|เดินทาง|ตากผ้า|วิ่ง|ปั่นจักรยาน|เดินเล่น")
 
 # A short prompt of its own: under the chat persona prompt ("ตอบเนื้อหาเลย") Gemma said
 # "ผมขอเช็คก่อนนะครับ" and made the answer up instead of calling a tool (7/25 right, 25/25 here).
 SELECT_PROMPT = ("คุณคือตัวเลือกเครื่องมือของ JARVIS ผู้ช่วยในบ้าน ถ้าคำถามต้องใช้ข้อมูลจริงเรื่องอากาศ ต้นไม้ "
-                 "อุปกรณ์ หรือวันเวลา ให้เรียกเครื่องมือที่เกี่ยวข้อง เรียกได้หลายตัว "
+                 "อุปกรณ์ น้ำท่วม หรือวันเวลา ให้เรียกเครื่องมือที่เกี่ยวข้อง เรียกได้หลายตัว "
                  "ถ้าผู้ใช้กำลังจะออกไปข้างนอก เดินทาง ตากผ้า หรือทำกิจกรรมกลางแจ้ง ให้เรียก get_weather ด้วย "
                  "ถ้าไม่ต้องใช้ข้อมูลจริงให้ตอบคำเดียวว่า ไม่ต้องใช้")
 
@@ -51,6 +55,8 @@ class Tool:
     run: Callable[..., object]
     """Called as run(ctx, **arguments); returns JSON-serializable data."""
     parameters: dict = field(default_factory=dict)
+    available: Callable[[Config], bool] = lambda _config: True
+    """Offered to the LLM only when this is true (e.g. an API key is configured)."""
 
     def spec(self) -> dict:
         return {"type": "function", "function": {
@@ -256,6 +262,80 @@ def _datetime(_ctx: Context) -> dict:
             "time": f"{now.hour} นาฬิกา {now.minute} นาที"}
 
 
+GISTDA_FLOOD = "https://api-gateway.gistda.or.th/api/2.0/resources/features/flood/7days"
+FLOOD_FEATURES = 1000
+"""Flooded cells fetched per question (~2.7 MB, under a second); the count covers them all."""
+HOME_BOX_DEGREES = 0.15
+"""Half-width of the "near home" box around [weather] lat/lon, about 15 km."""
+RAI_PER_KM2 = 625
+# Thai province codes (the API's pv_idn), with the short names people say.
+PROVINCES = {
+    "กรุงเทพ": 10, "สมุทรปราการ": 11, "นนทบุรี": 12, "ปทุมธานี": 13, "อยุธยา": 14, "อ่างทอง": 15,
+    "ลพบุรี": 16, "สิงห์บุรี": 17, "ชัยนาท": 18, "สระบุรี": 19, "ชลบุรี": 20, "ระยอง": 21, "จันทบุรี": 22,
+    "ตราด": 23, "ฉะเชิงเทรา": 24, "ปราจีนบุรี": 25, "นครนายก": 26, "สระแก้ว": 27, "โคราช": 30,
+    "นครราชสีมา": 30, "บุรีรัมย์": 31, "สุรินทร์": 32, "ศรีสะเกษ": 33, "อุบล": 34, "ยโสธร": 35,
+    "ชัยภูมิ": 36, "อำนาจเจริญ": 37, "บึงกาฬ": 38, "หนองบัวลำภู": 39, "ขอนแก่น": 40, "อุดร": 41,
+    "เลย": 42, "หนองคาย": 43, "มหาสารคาม": 44, "ร้อยเอ็ด": 45, "กาฬสินธุ์": 46, "สกลนคร": 47,
+    "นครพนม": 48, "มุกดาหาร": 49, "เชียงใหม่": 50, "ลำพูน": 51, "ลำปาง": 52, "อุตรดิตถ์": 53, "แพร่": 54,
+    "น่าน": 55, "พะเยา": 56, "เชียงราย": 57, "แม่ฮ่องสอน": 58, "นครสวรรค์": 60, "อุทัยธานี": 61,
+    "กำแพงเพชร": 62, "ตาก": 63, "สุโขทัย": 64, "พิษณุโลก": 65, "พิจิตร": 66, "เพชรบูรณ์": 67,
+    "ราชบุรี": 70, "กาญจนบุรี": 71, "สุพรรณบุรี": 72, "นครปฐม": 73, "สมุทรสาคร": 74, "สมุทรสงคราม": 75,
+    "เพชรบุรี": 76, "ประจวบ": 77, "นครศรีธรรมราช": 80, "กระบี่": 81, "พังงา": 82,
+    "ภูเก็ต": 83, "สุราษฎร์": 84, "ระนอง": 85, "ชุมพร": 86, "สงขลา": 90, "หาดใหญ่": 90, "สตูล": 91,
+    "ตรัง": 92, "พัทลุง": 93, "ปัตตานี": 94, "ยะลา": 95, "นราธิวาส": 96,
+}
+
+
+def province_code(name: str) -> int | None:
+    """"จังหวัดพระนครศรีอยุธยา", "อยุธยา" → 14; longest match first ("นครนายก" before "นคร")."""
+    for short in sorted(PROVINCES, key=len, reverse=True):
+        if short in name:
+            return PROVINCES[short]
+    return None
+
+
+def flood_summary(features: list[dict], matched: int, where: str) -> dict:
+    if not matched:
+        return {"flooding": f"ดาวเทียมไม่พบพื้นที่น้ำท่วม{where}ในรอบ 7 วัน"}
+    km2 = sum(f["properties"].get("f_area") or 0 for f in features) / 1e6
+    districts: dict[str, float] = {}
+    for f in features:
+        p = f["properties"]
+        name = f"{p.get('ap_tn', '')} {p.get('pv_tn', '')}".strip()
+        districts[name] = districts.get(name, 0) + (p.get("f_area") or 0)
+    top = sorted(districts, key=districts.get, reverse=True)[:3]
+    people = sum(f["properties"].get("population") or 0 for f in features)
+    partial = matched > len(features)
+    return {"flooding": f"ดาวเทียมพบพื้นที่น้ำท่วม{where}ในรอบ 7 วัน",
+            "area": f"{'อย่างน้อย' if partial else 'ราว'} {round(km2 * RAI_PER_KM2):,} ไร่",
+            "most_in": top, "people_nearby": round(people),
+            "updated": max(f["properties"].get("_createdAt", "") for f in features)[:10]}
+
+
+def _flood(ctx: Context, province: str = "") -> dict:
+    params = {"limit": FLOOD_FEATURES}
+    code = province_code(province) if province else None
+    if province and code is None:
+        return {"error": f"ไม่รู้จักจังหวัด {province}"}
+    if code:
+        params["pv_idn"] = code
+        where = f"ใน{province}"
+    else:
+        lat, lon, d = ctx.config.weather_lat, ctx.config.weather_lon, HOME_BOX_DEGREES
+        params["bbox"] = f"{lon - d},{lat - d},{lon + d},{lat + d}"
+        where = "แถวบ้าน (รัศมีราว 15 กม.)"
+    url = GISTDA_FLOOD + "?" + "&".join(f"{k}={v}" for k, v in params.items())
+    # The key goes in a header: the API echoes query strings back in its "links".
+    request = urllib.request.Request(url, headers={"API-Key": ctx.config.gistda_api_key})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read())
+    except (OSError, ValueError):
+        return {"error": "ดึงข้อมูลน้ำท่วมจาก GISTDA ไม่ได้"}
+    return {"source": "ภาพดาวเทียมจาก GISTDA (เห็นน้ำท่วมพื้นที่กว้าง ไม่เห็นน้ำขังบนถนนหลังฝนตก)",
+            **flood_summary(data.get("features", []), data.get("numberMatched", 0), where)}
+
+
 TOOLS = (
     Tool("get_weather", "พยากรณ์อากาศที่บ้าน: ฝนตกตอนนี้ไหม ฝนจะหยุดหรือเริ่มกี่โมง ร้อนไหม ความชื้น "
          "ภาพรวมเช้า บ่าย เย็น", _weather,
@@ -263,6 +343,9 @@ TOOLS = (
     Tool("get_garden", "เซ็นเซอร์ต้นไม้: ความชื้นดิน อุณหภูมิ ต้องรดน้ำไหม", _garden),
     Tool("get_devices", "สถานะอุปกรณ์ในบ้าน เช่น ไฟเปิดหรือปิดอยู่ ออนไลน์ครบไหม", _devices),
     Tool("get_datetime", "วันที่และเวลาตอนนี้", _datetime),
+    Tool("get_flood", "พื้นที่น้ำท่วมจริงจากดาวเทียมในรอบ 7 วัน แถวบ้านหรือในจังหวัดที่ถาม", _flood,
+         {"province": {"type": "string", "description": "ชื่อจังหวัดที่ถาม เว้นว่างถ้าถามแถวบ้าน"}},
+         available=lambda config: bool(config.gistda_api_key)),
 )
 BY_NAME = {tool.name: tool for tool in TOOLS}
 
@@ -276,13 +359,15 @@ class Call:
         return self.name + "(" + ",".join(f"{k}={v}" for k, v in self.arguments.items()) + ")"
 
 
-def pick(text: str, endpoint: str) -> list[Call]:
+def pick(text: str, config: Config) -> list[Call]:
     """Which tools the LLM wants for `text`; empty when it can answer without data."""
+    offered = [tool.spec() for tool in TOOLS if tool.available(config)]
     calls = tool_calls([{"role": "system", "content": SELECT_PROMPT}, {"role": "user", "content": text}],
-                       endpoint, [tool.spec() for tool in TOOLS], max_tokens=48, timeout=30)
+                       config.llm_endpoint, offered, max_tokens=48, timeout=30)
     picked = []
     for call in calls:
         tool = BY_NAME.get(call.get("name", ""))
+        tool = tool if tool and tool.available(config) else None
         try:
             arguments = json.loads(call.get("arguments") or "{}")
         except json.JSONDecodeError:
@@ -290,8 +375,11 @@ def pick(text: str, endpoint: str) -> list[Call]:
         if tool:
             known = tool.parameters.keys()
             picked.append(Call(tool.name, {k: v for k, v in arguments.items() if k in known}))
-    if _GOING_OUT.search(text) and not any(call.name == "get_weather" for call in picked):
+    names = {call.name for call in picked}
+    if (_GOING_OUT.search(text) or _FLOODING.search(text)) and "get_weather" not in names:
         picked.append(Call("get_weather", {"day": "tomorrow"} if "พรุ่งนี้" in text else {}))
+    if _FLOODING.search(text) and "get_flood" not in names and BY_NAME["get_flood"].available(config):
+        picked.append(Call("get_flood", {}))
     return picked
 
 

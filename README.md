@@ -110,6 +110,10 @@ permission the first time. Press Ctrl+C to stop listening.
   ดินค่อนข้างแห้ง) and computes facts like when the rain stops, and the LLM answers from
   them. Add a `Tool` to `TOOLS` and the LLM can use it; a wrong pick only gives a wrong
   answer, never a wrong action.
+- Flooding: with a GISTDA key in the git-ignored `secrets.toml` (`[gistda] api_key`, from
+  https://disaster.gistda.or.th/services/open-api) JARVIS answers from satellite flood maps of
+  the last 7 days, near home or by province, next to a rain-based estimate for street ponding
+  that satellites miss. Without a key the flood tool is simply not offered.
 - Every voice command's audio, transcripts and outcome are saved locally under
   `work/dataset/` for measuring and training later (`[dataset] enabled = false`
   turns this off).

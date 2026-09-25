@@ -4,3 +4,4 @@ work/
 .venv/
 profile.toml
 .venv-tts/
+secrets.toml

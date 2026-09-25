@@ -129,7 +129,7 @@ def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple
     """Returns (what was decided, reply, fillers to use if it is slow). Slow replies are lazy
     iterators, so tools and the LLM run while a filler plays; the rest is finished text."""
     try:
-        decided = route(text, ctx.config.llm_endpoint, alternatives)
+        decided = route(text, ctx.config, alternatives)
     except (OSError, ValueError, KeyError):
         return "error", "ติดต่อโมเดลภาษาไม่ได้ค่ะ", None
     if decided.intent == UNCLEAR:

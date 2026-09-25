@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .config import Config
 from .skills import SKILLS
 from .tools import Call, pick
 
 UNCLEAR = "unclear"
 FALLBACK = "chat"
 INFO = "info"
-"""Answer from tool results (weather, garden, devices, date and time)."""
+"""Answer from tool results (weather, flooding, garden, devices, date and time)."""
 
 
 @dataclass(frozen=True)
@@ -20,7 +21,7 @@ class Route:
     calls: tuple[Call, ...] = ()
 
 
-def route(transcript: str, endpoint: str, alternatives: tuple[str, ...] = ()) -> Route:
+def route(transcript: str, config: Config, alternatives: tuple[str, ...] = ()) -> Route:
     """`alternatives` are other transcripts of the same audio; their rules must agree."""
     texts = (transcript, *alternatives)
     fired = {skill.intent for skill in SKILLS if skill.rule and any(skill.rule(text) for text in texts)}
@@ -28,7 +29,7 @@ def route(transcript: str, endpoint: str, alternatives: tuple[str, ...] = ()) ->
         return Route(UNCLEAR)
     if fired:
         return Route(fired.pop())
-    calls = pick(transcript, endpoint)
+    calls = pick(transcript, config)
     if calls:
         return Route(INFO, tuple(calls))
     if any(skill.mentions and skill.mentions(transcript) for skill in SKILLS):
