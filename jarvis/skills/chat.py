@@ -22,7 +22,16 @@ CHAT_SYSTEM = (
     "ไม่ต้องขอโทษหรือเกริ่นนำ ตอบเนื้อหาเลย "
     "ข้อความที่ได้รับมาจากการแปลงเสียงพูดเป็นตัวอักษรด้วยโปรแกรมที่ไม่แม่นยำ "
     "อาจมีคำผิดหรือฟังไม่ครบ ถ้าข้อความดูไม่สมเหตุสมผลหรือไม่แน่ใจว่าหมายถึงอะไร "
-    "ให้ถามกลับสั้นๆ เพื่อความชัดเจน อย่าเดาหรือแต่งเรื่องขึ้นมาตอบ"
+    "ให้ถามกลับสั้นๆ เพื่อความชัดเจน อย่าเดาหรือแต่งเรื่องขึ้นมาตอบ "
+    "คุณเข้าอินเทอร์เน็ตทั่วไปไม่ได้ ใช้ได้แค่ข้อมูลในบ้านและพยากรณ์อากาศ"
+)
+# Always in the prompt, so llama-server reuses it from cache; only the data itself is new
+# tokens (reading ~400 new tokens took ~1.3 s of every weather answer).
+DATA_RULE = (
+    "\nถ้ามีหัวข้อ ข้อมูลจริง ต่อท้าย ให้ตอบจากข้อมูลนั้นเท่านั้น ห้ามเดาตัวเลข ห้ามพูดถึงเวลาหรือความแรงของฝน"
+    "ที่ไม่มีในข้อมูล พยากรณ์ให้พูดเป็นความน่าจะเป็น พูดเป็นภาษาคนทั่วไปที่เอาไปใช้ได้ เช่น ฝนหนัก พกร่ม อบอ้าว "
+    "ดินแห้ง ไม่ต้องอ่านตัวเลขเปอร์เซ็นต์ มิลลิเมตร หรือความชื้น เว้นแต่ผู้ใช้ถามตัวเลขเอง "
+    "ถ้าข้อมูลมี error ให้บอกตามจริง"
 )
 
 
@@ -95,21 +104,23 @@ def speakable(text: str) -> str:
     return " ".join(text.replace(":", " ").split())
 
 
-def _messages(ctx: Context, text: str) -> list[dict]:
-    messages = [{"role": "system", "content": _system(ctx) + _profile_context(ctx)}]
+def _messages(ctx: Context, text: str, data: tuple[str, ...] = ()) -> list[dict]:
+    system = _system(ctx) + _profile_context(ctx) + DATA_RULE + ("\nข้อมูลจริง:\n" + "\n".join(data) if data else "")
+    messages = [{"role": "system", "content": system}]
     for said, replied in ctx.history[-HISTORY_TURNS:]:
         messages += [{"role": "user", "content": said}, {"role": "assistant", "content": replied}]
     return messages + [{"role": "user", "content": text}]
 
 
-def _answer(ctx: Context, text: str) -> str:
-    reply = complete(_messages(ctx, text), ctx.config.llm_endpoint, temperature=0.7, max_tokens=160, timeout=60)
+def answer_from(ctx: Context, text: str, data: tuple[str, ...] = ()) -> str:
+    """The whole reply at once; `data` are tool results to answer from."""
+    reply = complete(_messages(ctx, text, data), ctx.config.llm_endpoint, temperature=0.7, max_tokens=160, timeout=60)
     return shorten(speakable(reply), ctx.config.gender)
 
 
-def _stream(ctx: Context, text: str) -> Iterator[str]:
-    """Yields whole sentences as Qwen writes them, up to STREAM_REPLY_CHARS in total."""
-    pieces = stream(_messages(ctx, text), ctx.config.llm_endpoint, temperature=0.7, max_tokens=200, timeout=60)
+def stream_from(ctx: Context, text: str, data: tuple[str, ...] = ()) -> Iterator[str]:
+    """Yields whole sentences as the model writes them, up to STREAM_REPLY_CHARS in total."""
+    pieces = stream(_messages(ctx, text, data), ctx.config.llm_endpoint, temperature=0.7, max_tokens=200, timeout=60)
     buffer, spoken = "", 0
     try:
         for piece in pieces:
@@ -139,5 +150,4 @@ def _stream(ctx: Context, text: str) -> Iterator[str]:
         pieces.close()  # stop generating once enough was said
 
 
-SKILLS = (Skill(intent="chat", description="คำถามหรือบทสนทนาทั่วไปที่ไม่ใช่การสั่งอุปกรณ์", handle=_answer,
-                slow=True, stream=_stream),)
+SKILLS = (Skill(intent="chat", handle=answer_from, slow=True, stream=stream_from),)

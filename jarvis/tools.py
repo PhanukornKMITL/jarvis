@@ -1,0 +1,242 @@
+"""Read-only tools the LLM picks by itself, then answers from their results.
+
+Anything that changes the house (switching a light) stays a rule-based skill: a wrong
+tool pick here only gives a wrong answer, never a wrong action. Results describe numbers
+in words (ฝนปรอยๆ, ดินค่อนข้างแห้ง) because the owner wants what they mean, and computing
+facts like "rain stops at 04:00" in code keeps a small model from misreading a table.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from .llm import tool_calls
+from .skills.base import Context
+
+DAYS = ("จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์")
+MONTHS = ("มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+          "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม")
+RAIN_MM = 0.5
+"""Rain per hour below this counts as no rain."""
+FORECAST_HOURS = 18
+FORECAST_SPANS = 6
+"""Rain spans passed on; each costs prompt tokens, and reading them was most of the wait."""
+FORECAST_CACHE_SECONDS = 600
+"""Open-Meteo updates hourly; refetching took ~0.8 s of every weather answer."""
+DRY_SOIL_PERCENT = 30
+
+# A short prompt of its own: under the chat persona prompt ("ตอบเนื้อหาเลย") Gemma said
+# "ผมขอเช็คก่อนนะครับ" and made the answer up instead of calling a tool (7/25 right, 25/25 here).
+SELECT_PROMPT = ("คุณคือตัวเลือกเครื่องมือของ JARVIS ผู้ช่วยในบ้าน ถ้าคำถามต้องใช้ข้อมูลจริงเรื่องอากาศ ต้นไม้ "
+                 "อุปกรณ์ หรือวันเวลา ให้เรียกเครื่องมือที่เกี่ยวข้อง เรียกได้หลายตัว "
+                 "ถ้าไม่ต้องใช้ข้อมูลจริงให้ตอบคำเดียวว่า ไม่ต้องใช้")
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    description: str
+    run: Callable[..., object]
+    """Called as run(ctx, **arguments); returns JSON-serializable data."""
+    parameters: dict = field(default_factory=dict)
+
+    def spec(self) -> dict:
+        return {"type": "function", "function": {
+            "name": self.name, "description": self.description,
+            "parameters": {"type": "object", "properties": self.parameters}}}
+
+
+def rain_words(mm: float) -> str:
+    if mm < RAIN_MM:
+        return "ไม่มีฝน"
+    if mm < 2.5:
+        return "ฝนปรอยๆ"
+    if mm < 7.6:
+        return "ฝนปานกลาง"
+    return "ฝนหนัก"
+
+
+def chance_words(percent: int) -> str:
+    if percent < 30:
+        return "ไม่น่าตก"
+    if percent < 60:
+        return "อาจจะตก"
+    return "น่าจะตก"
+
+
+def feel_words(temp: float, humidity: float) -> str:
+    if temp >= 33:
+        return "ร้อนมาก" + (" อบอ้าว" if humidity >= 60 else "")
+    if temp >= 29:
+        return "ร้อน อบอ้าว" if humidity >= 70 else "ค่อนข้างร้อน"
+    if temp >= 24:
+        return "กำลังสบาย ชื้นๆ" if humidity >= 85 else "กำลังสบาย"
+    return "ค่อนข้างเย็น"
+
+
+def soil_words(percent: float) -> str:
+    if percent < DRY_SOIL_PERCENT * 0.66:
+        return "ดินแห้งมาก ควรรดน้ำเลย"
+    if percent < DRY_SOIL_PERCENT:
+        return "ดินค่อนข้างแห้ง ควรรดน้ำ"
+    return "ดินยังชื้นดี ยังไม่ต้องรดน้ำ"
+
+
+def weather_facts(data: dict, day: str = "today") -> dict:
+    """`data` is an Open-Meteo forecast response. Timing facts always look FORECAST_HOURS
+    ahead across midnight: with only today's hours, Gemma knew rain "returns at 06:00
+    tomorrow" but not how hard, and invented "หนักขึ้น"."""
+    current, hourly = data["current"], data["hourly"]
+    now = current["time"][:13]
+    hours = [{"time": t[11:16], "date": t[:10], "rain_mm": r, "rain_chance": p, "temp": round(c)}
+             for t, r, p, c in zip(hourly["time"], hourly["precipitation"],
+                                   hourly["precipitation_probability"], hourly["temperature_2m"])
+             if t[:13] >= now]
+    today = hours[0]["date"]
+    tomorrow = next((h["date"] for h in hours if h["date"] != today), None)
+
+    def when(h: dict) -> str:
+        return ("พรุ่งนี้ " if h["date"] != today else "") + h["time"]
+
+    def strongest(spell: list[dict]) -> str:
+        return rain_words(max(h["rain_mm"] for h in spell))
+
+    upcoming = hours[:FORECAST_HOURS]
+    now_rain = max(current["precipitation"], upcoming[0]["rain_mm"])
+    facts: dict = {"now": rain_words(now_rain),
+                   "feels": feel_words(current["temperature_2m"], current["relative_humidity_2m"]),
+                   "temperature_now": round(current["temperature_2m"]),
+                   "humidity_percent": current["relative_humidity_2m"]}
+    later = f"{FORECAST_HOURS} ชั่วโมงข้างหน้า"
+    if now_rain >= RAIN_MM:
+        stop = next((i for i, h in enumerate(upcoming) if h["rain_mm"] < RAIN_MM), None)
+        if stop is None:
+            facts["rain_stops"] = f"ยังไม่หยุดตลอด {later}"
+        else:
+            facts["rain_stops"] = f"ราว {when(upcoming[stop])}"
+            back = next((i for i in range(stop, len(upcoming)) if upcoming[i]["rain_mm"] >= RAIN_MM), None)
+            facts["rain_returns"] = (f"ไม่กลับมาตกใน {later}" if back is None else
+                                     f"ราว {when(upcoming[back])} เป็น{strongest(upcoming[back:back + 3])}")
+    else:
+        start = next((i for i, h in enumerate(upcoming) if h["rain_mm"] >= RAIN_MM), None)
+        facts["rain_starts"] = (f"ไม่มีฝนตลอด {later}" if start is None else
+                                f"ราว {when(upcoming[start])} เป็น{strongest(upcoming[start:start + 3])}")
+    spans: list[list] = []  # consecutive hours with the same rain merged, nothing to misread
+    for h in upcoming:
+        if spans and spans[-1][2] == rain_words(h["rain_mm"]):
+            spans[-1][1] = h
+        else:
+            spans.append([h, h, rain_words(h["rain_mm"])])
+    facts["next_hours"] = [
+        f"{when(a)}-{b['time'] if b['date'] == a['date'] else when(b)} {label}" if a is not b else f"{when(a)} {label}"
+        for a, b, label in spans[:FORECAST_SPANS]]
+    pick = [h for h in hours if h["date"] == (tomorrow if day == "tomorrow" else today)]
+    if pick:
+        summary: dict = {"day": "พรุ่งนี้" if day == "tomorrow" else "ที่เหลือของวันนี้",
+                         "temp_range": [min(h["temp"] for h in pick), max(h["temp"] for h in pick)]}
+        for label, lo, hi in (("เช้า", "06", "12"), ("บ่าย", "12", "18"), ("เย็นถึงค่ำ", "18", "24")):
+            part = [h for h in pick if lo <= h["time"][:2] < hi]
+            if part:
+                summary[label] = f"{chance_words(max(h['rain_chance'] for h in part))} แรงสุด{strongest(part)}"
+        facts["day_summary"] = summary
+    return facts
+
+
+_forecast: dict = {}
+
+
+def _weather(ctx: Context, day: str = "today") -> dict:
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={ctx.config.weather_lat}&longitude={ctx.config.weather_lon}"
+        "&current=temperature_2m,relative_humidity_2m,precipitation"
+        "&hourly=temperature_2m,precipitation,precipitation_probability"
+        "&timezone=auto&forecast_days=2"
+    )
+    try:
+        cached = _forecast.get(url)
+        if not cached or time.monotonic() - cached[0] > FORECAST_CACHE_SECONDS:
+            with urllib.request.urlopen(url, timeout=8) as response:
+                cached = _forecast[url] = (time.monotonic(), json.loads(response.read()))
+        return weather_facts(cached[1], day)
+    except (OSError, ValueError, KeyError, IndexError):
+        return {"error": "ดึงข้อมูลอากาศไม่ได้ อาจเพราะอินเทอร์เน็ตมีปัญหา"}
+
+
+def _garden(ctx: Context) -> object:
+    gardens = [d for d in ctx.devices() if d.get("device_type") == "garden"]
+    if not gardens:
+        return {"error": "ไม่มีเซ็นเซอร์ต้นไม้เชื่อมต่ออยู่"}
+    result = []
+    for garden in gardens:
+        state = dict(garden.get("state", {}))
+        if "soil_moisture" in state:
+            state["soil"] = soil_words(state["soil_moisture"])
+        result.append({"name": garden.get("name"), "online": garden.get("online"), **state})
+    return result
+
+
+def _devices(ctx: Context) -> object:
+    return [{"name": "ไฟโต๊ะ" if d.get("device_id") == "desk_light" else d.get("name"),
+             "type": d.get("device_type"), "online": d.get("online"), "state": d.get("state")}
+            for d in ctx.devices()]
+
+
+def _datetime(_ctx: Context) -> dict:
+    now = datetime.now()
+    return {"date": f"วัน{DAYS[now.weekday()]}ที่ {now.day} {MONTHS[now.month - 1]} {now.year + 543}",
+            "time": f"{now.hour} นาฬิกา {now.minute} นาที"}
+
+
+TOOLS = (
+    Tool("get_weather", "พยากรณ์อากาศที่บ้าน: ฝนตกตอนนี้ไหม ฝนจะหยุดหรือเริ่มกี่โมง ร้อนไหม ความชื้น "
+         "ภาพรวมเช้า บ่าย เย็น", _weather,
+         {"day": {"type": "string", "enum": ["today", "tomorrow"], "description": "ถามเรื่องวันนี้หรือพรุ่งนี้"}}),
+    Tool("get_garden", "เซ็นเซอร์ต้นไม้: ความชื้นดิน อุณหภูมิ ต้องรดน้ำไหม", _garden),
+    Tool("get_devices", "สถานะอุปกรณ์ในบ้าน เช่น ไฟเปิดหรือปิดอยู่ ออนไลน์ครบไหม", _devices),
+    Tool("get_datetime", "วันที่และเวลาตอนนี้", _datetime),
+)
+BY_NAME = {tool.name: tool for tool in TOOLS}
+
+
+@dataclass(frozen=True)
+class Call:
+    name: str
+    arguments: dict
+
+    def label(self) -> str:
+        return self.name + "(" + ",".join(f"{k}={v}" for k, v in self.arguments.items()) + ")"
+
+
+def pick(text: str, endpoint: str) -> list[Call]:
+    """Which tools the LLM wants for `text`; empty when it can answer without data."""
+    calls = tool_calls([{"role": "system", "content": SELECT_PROMPT}, {"role": "user", "content": text}],
+                       endpoint, [tool.spec() for tool in TOOLS], max_tokens=48, timeout=30)
+    picked = []
+    for call in calls:
+        tool = BY_NAME.get(call.get("name", ""))
+        try:
+            arguments = json.loads(call.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        if tool:
+            known = tool.parameters.keys()
+            picked.append(Call(tool.name, {k: v for k, v in arguments.items() if k in known}))
+    return picked
+
+
+def run(ctx: Context, calls: list[Call]) -> list[str]:
+    """One line per tool for the answer prompt: "get_weather: {...}"."""
+    lines = []
+    for call in calls:
+        try:
+            result = BY_NAME[call.name].run(ctx, **call.arguments)
+        except (OSError, ValueError, KeyError, TypeError) as error:  # e.g. device server down
+            result = {"error": f"อ่านข้อมูลไม่ได้ ({type(error).__name__})"}
+        lines.append(f"{call.name}: {json.dumps(result, ensure_ascii=False)}")
+    return lines

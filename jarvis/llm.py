@@ -1,4 +1,4 @@
-"""Client for an OpenAI-compatible chat endpoint (llama-server running Qwen)."""
+"""Client for an OpenAI-compatible chat endpoint (llama-server)."""
 
 from __future__ import annotations
 
@@ -38,3 +38,13 @@ def stream(messages: list[dict], endpoint: str, temperature: float, max_tokens: 
                 continue
             if piece:
                 yield piece
+
+
+def tool_calls(messages: list[dict], endpoint: str, tools: list[dict], max_tokens: int, timeout: int) -> list[dict]:
+    """The functions the model chose to call, as [{"name", "arguments"}]; empty if none."""
+    body = json.dumps({"messages": messages, "tools": tools, "temperature": 0, "max_tokens": max_tokens}).encode()
+    request = urllib.request.Request(endpoint.rstrip("/") + "/v1/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        message = json.loads(response.read())["choices"][0]["message"]
+    return [call["function"] for call in message.get("tool_calls") or [] if "function" in call]

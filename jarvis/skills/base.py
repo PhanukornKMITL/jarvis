@@ -27,16 +27,13 @@ class Context:
 @dataclass(frozen=True)
 class Skill:
     intent: str
-    description: str
-    """Thai description shown to the LLM classifier."""
     handle: Callable[[Context, str], str]
     """Gets the command text, returns the spoken reply."""
     rule: Callable[[str], bool] | None = None
-    """Deterministic match; checked before the LLM. Two skills' rules firing means unclear."""
-    rule_only: bool = False
-    """The LLM may not pick this skill by itself: a wrong guess acts on something (e.g. switches a light)."""
+    """Deterministic match; the only way an action runs, never an LLM guess. Two skills'
+    rules firing means unclear."""
     mentions: Callable[[str], bool] | None = None
-    """For rule_only skills: text that sounds like this topic becomes unclear instead of chat."""
+    """Text that sounds like this topic but matched no rule is asked again instead of chatted about."""
     slow: bool = False
     """Takes seconds (network, LLM): JARVIS says a short filler first so the wait isn't silent."""
     stream: Callable[[Context, str], Iterator[str]] | None = None

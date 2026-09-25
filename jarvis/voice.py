@@ -30,18 +30,20 @@ from pathlib import Path
 from .audio import BYTES_PER_SECOND, SPEECH_RMS, Microphone, rms_level
 from .config import Config
 from .dataset import Dataset
-from .intent import UNCLEAR, classify
+from .intent import INFO, UNCLEAR, route
 from .persona import apply_persona
 from .skills import BY_INTENT, Context
+from .skills.chat import stream_from
 from .skills.light import OFF_REPLY, ON_REPLY
 from .stt import SAMPLE_RATE, WhisperSTT, clean_transcript
+from . import tools
 from .tts import Speaker, split_sentences, synthesize_f5
 from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, normalize, split_wake
 
 READY_REPLY = "พร้อมฟังค่ะ"
 UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอีกทีนะคะ"
 NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ"
-ERROR_REPLY = "ติดต่อ JARVIS หรือ Qwen ไม่ได้ค่ะ"
+ERROR_REPLY = "ติดต่อ JARVIS หรือโมเดลภาษาไม่ได้ค่ะ"
 FILLERS = ("อืม ขอคิดแป๊บนึงนะคะ", "อืม สักครู่นะคะ", "ได้ค่ะ ขอเช็คแป๊บนึงนะคะ")
 STOPPED_REPLY = "ได้ค่ะ"
 WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS, STOPPED_REPLY)
@@ -103,24 +105,31 @@ def _deferred(skill, ctx: Context, text: str) -> Iterator[str]:
     yield from split_sentences(skill.handle(ctx, text))
 
 
-def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str]]:
-    """Returns (intent, reply). Slow skills return a lazy iterator so they run while the
-    filler plays; everything else returns the finished text."""
+def _from_tools(ctx: Context, text: str, calls: tuple[tools.Call, ...]) -> Iterator[str]:
+    yield from stream_from(ctx, text, tuple(tools.run(ctx, list(calls))))
+
+
+def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str], bool]:
+    """Returns (what was decided, reply, slow). Slow replies are lazy iterators, so tools
+    and the LLM run while the filler plays; everything else is the finished text."""
     try:
-        intent = classify(text, ctx.config.llm_endpoint, alternatives)
+        decided = route(text, ctx.config.llm_endpoint, alternatives)
     except (OSError, ValueError, KeyError):
-        return "error", "ติดต่อ Qwen ไม่ได้ค่ะ"
-    if intent == UNCLEAR:
-        return intent, UNCLEAR_REPLY
-    skill = BY_INTENT[intent]
+        return "error", "ติดต่อโมเดลภาษาไม่ได้ค่ะ", False
+    if decided.intent == UNCLEAR:
+        return UNCLEAR, UNCLEAR_REPLY, False
+    if decided.intent == INFO:
+        label = INFO + ":" + "+".join(call.label() for call in decided.calls)
+        return label, _guarded(_from_tools(ctx, text, decided.calls)), True
+    skill = BY_INTENT[decided.intent]
     if skill.stream:
-        return intent, _guarded(skill.stream(ctx, text))
+        return skill.intent, _guarded(skill.stream(ctx, text)), skill.slow
     if skill.slow:
-        return intent, _guarded(_deferred(skill, ctx, text))
+        return skill.intent, _guarded(_deferred(skill, ctx, text)), True
     try:
-        return intent, skill.handle(ctx, text)
+        return skill.intent, skill.handle(ctx, text), False
     except (ConnectionRefusedError, asyncio.TimeoutError, OSError, ValueError, KeyError):
-        return intent, ERROR_REPLY
+        return skill.intent, ERROR_REPLY, False
 
 
 def is_echo(heard: str, said: str) -> bool:
@@ -449,11 +458,11 @@ class VoiceSession:
 
     def respond(self, heard: Heard, wake_heard: str) -> tuple[bytes | None, list[str]]:
         log_voice(f"คำสั่ง: {heard.command}" + (f" (base: {heard.alternatives[0]})" if heard.alternatives else ""))
-        intent, reply = answer(self.ctx, heard.command, heard.alternatives)
-        log_voice(f"intent: {intent}")
-        skill = BY_INTENT.get(intent)
+        started = time.monotonic()
+        intent, reply, slow = answer(self.ctx, heard.command, heard.alternatives)
+        log_voice(f"intent: {intent} ({time.monotonic() - started:.2f}s)")
         self._spoken = []
-        barge, unspoken = self.say(reply, filler=bool(skill and skill.slow))
+        barge, unspoken = self.say(reply, filler=slow)
         said = " ".join(self._spoken)
         self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command=heard.command,
                           base=heard.base, intent=intent, reply=said, interrupted=barge is not None,

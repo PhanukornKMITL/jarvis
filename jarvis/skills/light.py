@@ -28,18 +28,14 @@ def _mentions_light(text: str) -> bool:
 SKILLS = (
     Skill(
         intent="light_on",
-        description="สั่งเปิดไฟ",
         handle=lambda ctx, _text: _switch(ctx, "turn_on", ON_REPLY),
         rule=lambda text: bool(_ON.search(text)),
-        rule_only=True,
         mentions=_mentions_light,
     ),
     Skill(
         intent="light_off",
-        description="สั่งปิดไฟ",
         handle=lambda ctx, _text: _switch(ctx, "turn_off", OFF_REPLY),
         rule=lambda text: bool(_OFF.search(text)),
-        rule_only=True,
         mentions=_mentions_light,
     ),
 )

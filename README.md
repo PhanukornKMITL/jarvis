@@ -62,9 +62,9 @@ python3 -m jarvis.cli light-off
 
 ## Try local voice (macOS)
 
-Everything runs on the Mac: whisper.cpp for Thai speech-to-text, Qwen through
-`llama-server` for understanding and chat, and the local `say` voice (Kanya) for
-replies. Microphone audio never leaves the machine. Only the weather skill uses
+Everything runs on the Mac: whisper.cpp for Thai speech-to-text, Gemma through
+`llama-server` for understanding and chat, and F5-TTS (or the local `say` voice) for
+replies. Microphone audio never leaves the machine. Only the weather tool uses
 the internet (it sends the configured coordinates to api.open-meteo.com).
 Models download once into the ignored `.models/` folder.
 
@@ -96,15 +96,20 @@ llama-server -m .models/gemma-4-E4B-it-Q4_K_M.gguf --port 8080 -c 4096 -ngl 99 -
 
 Speak in one breath ("จาวิส ปิดไฟที", "เฮ้ จาวิส วันนี้ฝนจะตกไหม",
 "จาวิส ต้นไม้เป็นไงบ้าง"), or say "จาวิส", wait for "พร้อมฟังค่ะ", then speak.
-Anything else goes to Qwen as a question. macOS may ask Terminal for microphone
+Anything else goes to the LLM, which looks up weather, the garden, devices or the time
+when the question needs real data. macOS may ask Terminal for microphone
 permission the first time. Press Ctrl+C to stop listening.
 
 - `config.toml` picks the models, LLM endpoint, voice, weather coordinates and
   dataset folder, so a hardware upgrade is usually a config change.
 - Light on/off is decided by rules, never by an LLM guess; when the transcript is
   ambiguous JARVIS asks again instead of switching the wrong way.
-- Each skill lives in `jarvis/skills/`; add a module with `SKILLS` and list it in
-  `jarvis/skills/__init__.py`, and its description reaches the Qwen prompt automatically.
+- Actions (switching the light) are skills in `jarvis/skills/`, run only by their rules.
+- Read-only information is a tool in `jarvis/tools.py`: the LLM picks the tools a question
+  needs (in a short prompt of its own), code turns the numbers into words (ฝนปรอยๆ,
+  ดินค่อนข้างแห้ง) and computes facts like when the rain stops, and the LLM answers from
+  them. Add a `Tool` to `TOOLS` and the LLM can use it; a wrong pick only gives a wrong
+  answer, never a wrong action.
 - Every voice command's audio, transcripts and outcome are saved locally under
   `work/dataset/` for measuring and training later (`[dataset] enabled = false`
   turns this off).
@@ -136,8 +141,8 @@ git-ignored `.models/`: a voice clip is someone's voice and must not be committe
 
 After the wake word JARVIS stays in a conversation:
 
-- slow answers (chat, weather) start with a cached filler ("อืม สักครู่นะครับ");
-- chat replies stream from Qwen and are spoken sentence by sentence (first audio in ~1 s);
+- slow answers (chat, tool lookups) start with a cached filler ("อืม สักครู่นะครับ");
+- chat replies stream from the LLM and are spoken sentence by sentence (first audio in ~1 s);
 - speaking over JARVIS stops it and your words become the next command (`[voice] barge_in`;
   meant for a headset, where JARVIS barely hears itself);
 - for `[voice] follow_up_seconds` after a reply you can ask again without "จาวิส", and
