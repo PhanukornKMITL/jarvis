@@ -80,7 +80,7 @@ mention = "ปลวกแดง"
 say = "อำเภอ{home_district}น้ำท่วมด้วยเหรอ บริเวณไหนพอจะรู้ไหม"
 tools = ["get_flood_report"]
 mention = "ต\\.|ตำบล|อ\\.|อำเภอ"
-avoid = "ตรวจสอบ"
+avoid = "ควรตรวจสอบ|ลองตรวจสอบ|ไปตรวจสอบ|ตรวจสอบข้อมูลล่าสุด"
 [[operation.flood]]
 say = "คลองแถวบ้านน้ำจะล้นไหม"
 tools = ["get_water_level"]

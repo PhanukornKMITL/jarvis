@@ -152,7 +152,7 @@ git-ignored `.models/`: a voice clip is someone's voice and must not be committe
 
 After the wake word JARVIS stays in a conversation:
 
-- slow answers (chat, tool lookups) start with a cached filler ("อืม สักครู่นะครับ");
+- slow answers get a cached filler ("ขอเช็คแป๊บนึงนะครับ" for lookups, "เดี๋ยวนะครับ" for chat) only if the first sentence is not ready after 0.6 s;
 - chat replies stream from the LLM and are spoken sentence by sentence (first audio in ~1 s);
 - speaking over JARVIS stops it and your words become the next command (`[voice] barge_in`;
   meant for a headset, where JARVIS barely hears itself);

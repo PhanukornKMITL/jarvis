@@ -45,7 +45,8 @@ UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอี�
 NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ"
 ERROR_REPLY = "ติดต่อ JARVIS หรือโมเดลภาษาไม่ได้ค่ะ"
 # "ขอเช็คแป๊บนึง" before a chat reply ("ขี้เกียจไปอาบน้ำอะ") sounded silly: nothing was checked.
-THINK_FILLERS = ("อืม", "อืม ขอคิดแป๊บนึงนะคะ", "อืม สักครู่นะคะ")
+# No "อืม": F5 reads it as a word, not the hum a person makes.
+THINK_FILLERS = ("เดี๋ยวนะคะ", "ขอคิดแป๊บนึงนะคะ", "ได้ค่ะ ขอคิดก่อนนะคะ")
 LOOKUP_FILLERS = ("ขอเช็คแป๊บนึงนะคะ", "สักครู่นะคะ ขอดูข้อมูลก่อน", "ได้ค่ะ ขอเช็คก่อนนะคะ")
 FILLERS = (*THINK_FILLERS, *LOOKUP_FILLERS)
 FILLER_AFTER_SECONDS = 0.6
