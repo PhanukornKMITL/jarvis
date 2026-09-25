@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +25,8 @@ class Profile:
     """How JARVIS should come across ([jarvis] personality)."""
     rules: tuple[str, ...] = ()
     """Behaviour rules for conversation ([jarvis] rules)."""
+    home: tuple[float, float] | None = None
+    """([home] lat, lon); kept here because config.toml is committed and this is where you live."""
 
 
 @dataclass(frozen=True)
@@ -66,7 +68,9 @@ def load_profile(path: Path = PROFILE_PATH) -> Profile:
         return Profile()
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
     data, jarvis = raw.get("profile", {}), raw.get("jarvis", {})
+    home = raw.get("home", {})
     return Profile(
+        home=(float(home["lat"]), float(home["lon"])) if "lat" in home and "lon" in home else None,
         name=str(data.get("name", "")),
         birth_date=str(data.get("birth_date", "")),
         birth_time=str(data.get("birth_time", "")),
@@ -86,8 +90,10 @@ def load_secrets(path: Path = SECRETS_PATH) -> dict:
 def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
                 secrets_path: Path = SECRETS_PATH) -> Config:
     gistda_key = str(load_secrets(secrets_path).get("gistda", {}).get("api_key", ""))
+    profile = load_profile(profile_path)
     if not path.is_file():
-        return Config(profile=load_profile(profile_path), gistda_api_key=gistda_key)
+        config = Config(profile=profile, gistda_api_key=gistda_key)
+        return _at_home(config)
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     stt, llm, tts = data.get("stt", {}), data.get("llm", {}), data.get("tts", {})
     weather, dataset = data.get("weather", {}), data.get("dataset", {})
@@ -96,8 +102,8 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
     optimize = data.get("optimize", {})
     default = Config()
     dataset_dir = ROOT / dataset["dir"] if "dir" in dataset else default.dataset_dir
-    return Config(
-        profile=load_profile(profile_path),
+    return _at_home(Config(
+        profile=profile,
         wake_model=ROOT / stt["wake_model"] if "wake_model" in stt else default.wake_model,
         command_model=ROOT / stt["command_model"] if "command_model" in stt else default.command_model,
         wake_port=int(stt.get("wake_port", default.wake_port)),
@@ -125,4 +131,12 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,
         quit_apps=tuple(optimize.get("quit_apps", default.quit_apps)),
         gistda_api_key=gistda_key,
-    )
+    ))
+
+
+def _at_home(config: Config) -> Config:
+    """profile.toml [home] overrides the committed [weather] coordinates."""
+    if config.profile.home is None:
+        return config
+    lat, lon = config.profile.home
+    return replace(config, weather_lat=lat, weather_lon=lon)

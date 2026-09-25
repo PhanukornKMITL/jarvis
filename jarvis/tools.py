@@ -101,12 +101,15 @@ def soil_words(percent: float) -> str:
 
 
 def flood_words(total_mm: float, peak_mm: float) -> str:
-    """Rough, from rain alone: Bangkok streets tend to pond from about 30 mm in an hour or
-    60 mm in a day. There is no flood data; the words say so."""
-    if peak_mm >= 30 or total_mm >= 60:
-        return "เสี่ยงน้ำท่วมขังสูง"
-    if peak_mm >= 10 or total_mm >= 20:
-        return "ถนนบางจุดอาจมีน้ำขัง"
+    """Rough, from rain alone, on the Thai Meteorological Department's daily scale (35-90 mm
+    heavy, 90+ very heavy) plus a downpour check. There is no flood data; the words say so.
+    63 mm of steady moderate rain was called "เสี่ยงสูง" with a Bangkok-street threshold."""
+    if peak_mm >= 30 or total_mm >= 90:
+        return "ฝนหนักมาก เสี่ยงน้ำท่วมขังสูง"
+    if peak_mm >= 10 or total_mm >= 35:
+        return "ฝนหนัก ที่ลุ่มและถนนบางจุดอาจมีน้ำขัง"
+    if total_mm >= 10:
+        return "ฝนไม่หนัก ไม่น่าจะท่วม อาจมีน้ำขังเล็กน้อย"
     return "ฝนไม่มากพอจะทำให้น้ำท่วม"
 
 
@@ -332,8 +335,15 @@ def _flood(ctx: Context, province: str = "") -> dict:
             data = json.loads(response.read())
     except (OSError, ValueError):
         return {"error": "ดึงข้อมูลน้ำท่วมจาก GISTDA ไม่ได้"}
-    return {"source": "ภาพดาวเทียมจาก GISTDA (เห็นน้ำท่วมพื้นที่กว้าง ไม่เห็นน้ำขังบนถนนหลังฝนตก)",
-            **flood_summary(data.get("features", []), data.get("numberMatched", 0), where)}
+    result = {"source": "ภาพดาวเทียมจาก GISTDA (เห็นน้ำท่วมพื้นที่กว้าง ไม่เห็นน้ำขังบนถนนหลังฝนตก)",
+              **flood_summary(data.get("features", []), data.get("numberMatched", 0), where)}
+    if not code:
+        # In one result so both get said: given satellite and rain as two tool results, Gemma
+        # answered only "ดาวเทียมไม่พบน้ำท่วม" and dropped the heavy rain coming.
+        rain = _weather(ctx).get("flooding")
+        if rain:
+            result["rain_next_hours"] = rain
+    return result
 
 
 TOOLS = (
