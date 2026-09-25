@@ -27,6 +27,8 @@ class Profile:
     """Behaviour rules for conversation ([jarvis] rules)."""
     home: tuple[float, float] | None = None
     """([home] lat, lon); kept here because config.toml is committed and this is where you live."""
+    home_place: str = ""
+    """([home] place) in words, e.g. the district, so "ผมอยู่ที่ไหน" can be answered."""
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,7 @@ def load_profile(path: Path = PROFILE_PATH) -> Profile:
     home = raw.get("home", {})
     return Profile(
         home=(float(home["lat"]), float(home["lon"])) if "lat" in home and "lon" in home else None,
+        home_place=str(home.get("place", "")),
         name=str(data.get("name", "")),
         birth_date=str(data.get("birth_date", "")),
         birth_time=str(data.get("birth_time", "")),

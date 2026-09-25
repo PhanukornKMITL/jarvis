@@ -70,6 +70,10 @@ def _profile_context(ctx: Context) -> str:
         # Qwen suggested fish and fish sauce to a vegetarian when this only said "มังสวิรัติ".
         facts.append(f"เรื่องอาหาร ผู้ใช้กิน{profile.diet} ถ้าแนะนำอาหารหรือสูตรอาหาร "
                      "ต้องไม่มีวัตถุดิบหรือเครื่องปรุงที่ขัดกับข้อนี้เด็ดขาด ใช้ของแทน เช่น ซีอิ๊วแทนน้ำปลา เต้าหู้แทนเนื้อสัตว์")
+    if profile.home_place:
+        # "ผมอยู่ที่ไหน" got "ผมไม่ทราบ": it didn't know it lives in the user's home.
+        facts.append(f"คุณติดตั้งอยู่ที่บ้านของผู้ใช้ {profile.home_place} ผู้ใช้คุยกับคุณผ่านไมค์ที่บ้าน "
+                     f"ถ้าถามว่าผู้ใช้หรือคุณอยู่ที่ไหน ให้บอกว่าน่าจะอยู่ที่บ้าน {profile.home_place}")
     if profile.about:
         facts.append(profile.about)
     if profile.interests:
