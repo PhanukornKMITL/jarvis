@@ -44,7 +44,12 @@ READY_REPLY = "พร้อมฟังค่ะ"
 UNCLEAR_REPLY = "ฟังไม่ชัดค่ะ ลองพูดอีกทีนะคะ"
 NOT_HEARD_REPLY = "ไม่ได้ยินคำถาม ลองเรียก Jarvis อีกครั้งนะคะ"
 ERROR_REPLY = "ติดต่อ JARVIS หรือโมเดลภาษาไม่ได้ค่ะ"
-FILLERS = ("อืม ขอคิดแป๊บนึงนะคะ", "อืม สักครู่นะคะ", "ได้ค่ะ ขอเช็คแป๊บนึงนะคะ")
+# "ขอเช็คแป๊บนึง" before a chat reply ("ขี้เกียจไปอาบน้ำอะ") sounded silly: nothing was checked.
+THINK_FILLERS = ("อืม", "อืม ขอคิดแป๊บนึงนะคะ", "อืม สักครู่นะคะ")
+LOOKUP_FILLERS = ("ขอเช็คแป๊บนึงนะคะ", "สักครู่นะคะ ขอดูข้อมูลก่อน", "ได้ค่ะ ขอเช็คก่อนนะคะ")
+FILLERS = (*THINK_FILLERS, *LOOKUP_FILLERS)
+FILLER_AFTER_SECONDS = 0.6
+"""A filler is said only when the first sentence isn't ready by then, as a person would."""
 STOPPED_REPLY = "ได้ค่ะ"
 WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS, STOPPED_REPLY)
 # Interrupting with only one of these drops the rest of the answer instead of resuming it.
@@ -117,27 +122,31 @@ def _from_tools(ctx: Context, text: str, calls: tuple[tools.Call, ...]) -> Itera
         yield reminder
 
 
-def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str], bool]:
-    """Returns (what was decided, reply, slow). Slow replies are lazy iterators, so tools
-    and the LLM run while the filler plays; everything else is the finished text."""
+Fillers = tuple[str, ...] | None
+
+
+def answer(ctx: Context, text: str, alternatives: tuple[str, ...] = ()) -> tuple[str, str | Iterator[str], Fillers]:
+    """Returns (what was decided, reply, fillers to use if it is slow). Slow replies are lazy
+    iterators, so tools and the LLM run while a filler plays; the rest is finished text."""
     try:
         decided = route(text, ctx.config.llm_endpoint, alternatives)
     except (OSError, ValueError, KeyError):
-        return "error", "ติดต่อโมเดลภาษาไม่ได้ค่ะ", False
+        return "error", "ติดต่อโมเดลภาษาไม่ได้ค่ะ", None
     if decided.intent == UNCLEAR:
-        return UNCLEAR, UNCLEAR_REPLY, False
+        return UNCLEAR, UNCLEAR_REPLY, None
     if decided.intent == INFO:
         label = INFO + ":" + "+".join(call.label() for call in decided.calls)
-        return label, _guarded(_from_tools(ctx, text, decided.calls)), True
+        return label, _guarded(_from_tools(ctx, text, decided.calls)), LOOKUP_FILLERS
     skill = BY_INTENT[decided.intent]
+    fillers = THINK_FILLERS if skill.slow else None
     if skill.stream:
-        return skill.intent, _guarded(skill.stream(ctx, text)), skill.slow
+        return skill.intent, _guarded(skill.stream(ctx, text)), fillers
     if skill.slow:
-        return skill.intent, _guarded(_deferred(skill, ctx, text)), True
+        return skill.intent, _guarded(_deferred(skill, ctx, text)), fillers
     try:
-        return skill.intent, skill.handle(ctx, text), False
+        return skill.intent, skill.handle(ctx, text), None
     except (ConnectionRefusedError, asyncio.TimeoutError, OSError, ValueError, KeyError):
-        return skill.intent, ERROR_REPLY, False
+        return skill.intent, ERROR_REPLY, None
 
 
 def is_echo(heard: str, said: str) -> bool:
@@ -257,15 +266,39 @@ class VoiceSession:
             self._spoken.append(text)
             yield text
 
-    def say(self, reply: str | Iterable[str], filler: bool = False, rendered: bool = False,
+    def _after_pause(self, parts: Iterator[str], fillers: tuple[str, ...]) -> Iterator[str]:
+        """Says one of `fillers` only if the first part takes longer than FILLER_AFTER_SECONDS."""
+        first: list = []
+
+        def pull() -> None:
+            try:
+                first.append(next(parts))
+            except StopIteration:
+                pass
+            except BaseException as error:  # re-raised below, in the speaker's thread
+                first.append(error)
+
+        puller = threading.Thread(target=pull, daemon=True)
+        puller.start()
+        puller.join(FILLER_AFTER_SECONDS)
+        if puller.is_alive():
+            yield self.render(random.choice(fillers), with_name=False)
+            puller.join()
+        for item in first:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+        yield from parts
+
+    def say(self, reply: str | Iterable[str], fillers: Fillers = None, rendered: bool = False,
             prefix: str | None = None) -> tuple[bytes | None, list[str]]:
         """Speaks a reply. Returns (the user's audio if they spoke over JARVIS, the parts of
         the reply that were not said). `rendered` parts already have the persona applied."""
         parts: Iterator[str] = iter(reply) if rendered else self._rendered(reply)
-        lead = [self.render(random.choice(FILLERS), with_name=False)] if filler else []
+        if fillers:
+            parts = self._after_pause(parts, fillers)
         if prefix:
-            lead.append(self.render(prefix, with_name=False))
-        parts = itertools.chain(lead, parts)
+            parts = itertools.chain([self.render(prefix, with_name=False)], parts)
         if not self.config.barge_in:
             self.mic.drain(self.speaker.speak(parts))
             return None, []
@@ -467,10 +500,10 @@ class VoiceSession:
     def respond(self, heard: Heard, wake_heard: str) -> tuple[bytes | None, list[str]]:
         log_voice(f"คำสั่ง: {heard.command}" + (f" (base: {heard.alternatives[0]})" if heard.alternatives else ""))
         started = time.monotonic()
-        intent, reply, slow = answer(self.ctx, heard.command, heard.alternatives)
+        intent, reply, fillers = answer(self.ctx, heard.command, heard.alternatives)
         log_voice(f"intent: {intent} ({time.monotonic() - started:.2f}s)")
         self._spoken = []
-        barge, unspoken = self.say(reply, filler=slow)
+        barge, unspoken = self.say(reply, fillers=fillers)
         said = " ".join(self._spoken)
         self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command=heard.command,
                           base=heard.base, intent=intent, reply=said, interrupted=barge is not None,
