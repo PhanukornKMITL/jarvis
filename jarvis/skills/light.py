@@ -5,8 +5,12 @@ import re
 from .base import Context, Skill
 
 TARGET = "desk_light"
-ON_REPLY = "เปิดไฟให้แล้วค่ะ"
-OFF_REPLY = "ปิดไฟให้แล้วค่ะ"
+import random
+
+# Varied, as a butler would; some address the owner as บอส/เจ้านาย (VISION.md).
+ON_REPLIES = ("เปิดไฟให้แล้วค่ะ", "เปิดแล้วค่ะ บอส", "เรียบร้อยค่ะ ไฟเปิดแล้ว", "ได้เลยค่ะ เจ้านาย")
+OFF_REPLIES = ("ปิดไฟให้แล้วค่ะ", "ปิดแล้วค่ะ บอส", "เรียบร้อยค่ะ ไฟปิดแล้ว", "ได้เลยค่ะ เจ้านาย")
+ON_REPLY, OFF_REPLY = ON_REPLIES[0], OFF_REPLIES[0]
 # Spellings whisper actually produced for these words over a Bluetooth headset mic.
 _LIGHT = r"(?:ไฟ|ฟาย|ฟัย|ภัย|fy|fai)"
 _ON = re.compile(rf"(?:เปิด|เปิ้ด|เบิด)\s*{_LIGHT}|open\s*{_LIGHT}", re.IGNORECASE)
@@ -28,13 +32,13 @@ def mentions_light(text: str) -> bool:
 SKILLS = (
     Skill(
         intent="light_on",
-        handle=lambda ctx, _text: _switch(ctx, "turn_on", ON_REPLY),
+        handle=lambda ctx, _text: _switch(ctx, "turn_on", random.choice(ON_REPLIES)),
         rule=lambda text: bool(_ON.search(text)),
         mentions=mentions_light,
     ),
     Skill(
         intent="light_off",
-        handle=lambda ctx, _text: _switch(ctx, "turn_off", OFF_REPLY),
+        handle=lambda ctx, _text: _switch(ctx, "turn_off", random.choice(OFF_REPLIES)),
         rule=lambda text: bool(_OFF.search(text)),
         mentions=mentions_light,
     ),

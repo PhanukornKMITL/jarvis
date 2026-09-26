@@ -36,7 +36,7 @@ from .intent import INFO, UNCLEAR, route, rules_fired
 from .persona import apply_persona
 from .skills import BY_INTENT, Context
 from .skills.chat import stream_from
-from .skills.light import OFF_REPLY, ON_REPLY
+from .skills.light import OFF_REPLIES, ON_REPLIES
 from .stt import SAMPLE_RATE, WhisperSTT, clean_transcript
 from . import memory, reminders, tools
 from .skills.remind import describe
@@ -55,7 +55,9 @@ FILLERS = (*THINK_FILLERS, *LOOKUP_FILLERS)
 FILLER_AFTER_SECONDS = 0.6
 """A filler is said only when the first sentence isn't ready by then, as a person would."""
 STOPPED_REPLY = "ได้ค่ะ"
-WARM_PHRASES = (READY_REPLY, ON_REPLY, OFF_REPLY, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS, STOPPED_REPLY)
+WARM_PHRASES = (READY_REPLY, *ON_REPLIES, *OFF_REPLIES, UNCLEAR_REPLY, NOT_HEARD_REPLY, *FILLERS, STOPPED_REPLY)
+NAMED_WARM = 2 + len(ON_REPLIES) + len(OFF_REPLIES)
+"""The first phrases are said with the owner's name, the rest (fillers) without."""
 # Interrupting with only one of these drops the rest of the answer instead of resuming it.
 # Matched against normalize()d text (tone marks removed) and must be the whole command,
 # so a question like "พอจะมีร้านแนะนำไหม" is not taken as "พอ".
@@ -96,6 +98,7 @@ REMIND_CHECK_SECONDS = 15
 ALARM_RINGS = 10
 ALARM_LISTEN_SECONDS = 8
 ALARM_SOUND = "/System/Library/Sounds/Glass.aiff"
+ACK_SOUND = "/System/Library/Sounds/Pop.aiff"
 _ALARM_SNOOZE = re.compile(rf"(?:นอน|เลื่อน|ขอ).{{0,8}}?อีก\s*{reminders._NUM}?\s*นาที|ขอนอนต่อ|ขอนอนอีก")
 
 
@@ -320,7 +323,8 @@ class VoiceSession:
         """Applies the persona per sentence (the name only once) and records what was said."""
         name = self.config.profile.name
         if isinstance(reply, str):
-            with_name = not name or name not in reply
+            # The name about half the time, as people do (VISION.md), not after every reply.
+            with_name = (not name or name not in reply) and random.random() < 0.5
             reply = split_sentences(reply) or [reply]
         else:
             # Streamed chat: Qwen already knows the name from the profile and often says it in a
@@ -440,7 +444,8 @@ class VoiceSession:
         """Pre-generates the fixed replies so they play instantly instead of after synthesis."""
         if not self.f5_port:
             return
-        texts = [self.render(t) for t in WARM_PHRASES[:5]] + [self.render(t, with_name=False) for t in WARM_PHRASES[5:]]
+        texts = [self.render(t, with_name=w) for t in WARM_PHRASES[:NAMED_WARM] for w in (True, False)] + \
+                [self.render(t, with_name=False) for t in WARM_PHRASES[NAMED_WARM:]]
         for text in texts:
             try:
                 synthesize_f5(text, self.f5_port, timeout=120)
@@ -663,6 +668,8 @@ class VoiceSession:
         intent, reply, fillers = answer(self.ctx, heard.command, heard.alternatives)
         log_voice(f"intent: {intent} ({time.monotonic() - started:.2f}s)")
         self._spoken = []
+        if intent.startswith("light_"):
+            subprocess.Popen(["afplay", ACK_SOUND])  # a click as the light switches
         barge, unspoken = self.say(reply, fillers=fillers)
         said = " ".join(self._spoken)
         self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command=heard.command,

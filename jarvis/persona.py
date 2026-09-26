@@ -28,7 +28,7 @@ def apply_persona(text: str, gender: str, name: str = "") -> str:
         for pattern, replacement in _MALE:
             text = pattern.sub(replacement, text)
     name = name.strip()
-    if not name or name in text:
+    if not name or name in text or re.search(r"บอส|เจ้านาย", text):
         return text
     title = name if name.startswith("คุณ") else f"คุณ{name}"
     mark = particle(gender)
