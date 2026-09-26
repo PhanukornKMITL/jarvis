@@ -27,7 +27,7 @@ def _work_off(ctx: Context, _text: str) -> str:
 
 def _night(ctx: Context, _text: str) -> str:
     try:
-        lights_on = any(d.get("device_type") == "light" and d.get("state", {}).get("power") == "on"
+        lights_on = any(d.get("device_type") == "light" and d.get("online") and d.get("state", {}).get("power") == "on"
                         for d in ctx.devices())
     except OSError:
         lights_on = False

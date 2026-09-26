@@ -36,6 +36,8 @@ class JarvisServer:
         self.token = token
         """Required from every connection that is not this Mac, once the server listens on the LAN."""
         self.devices: dict[str, DeviceSession] = {}
+        self.gone: dict[str, dict[str, Any]] = {}
+        """Devices that disconnected, with when: "why didn't the light switch?" needs it."""
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -65,6 +67,7 @@ class JarvisServer:
                     writer=writer,
                 )
                 self.devices[device_id] = session
+                self.gone.pop(device_id, None)
                 await writer.drain()
                 writer.write(encode({"type": "registered", "device_id": device_id}))
                 await writer.drain()
@@ -86,7 +89,9 @@ class JarvisServer:
             pass
         finally:
             if device_id and self.devices.get(device_id, None) and self.devices[device_id].writer is writer:
-                del self.devices[device_id]
+                lost = self.devices.pop(device_id)
+                self.gone[device_id] = {"device_id": device_id, "name": lost.name, "device_type": lost.device_type,
+                                        "online": False, "lost_at": time.strftime("%H:%M"), "state": lost.state}
             writer.close()
             try:
                 await writer.wait_closed()
@@ -122,12 +127,15 @@ class JarvisServer:
                 "state": d.state,
             }
             for d in sorted(self.devices.values(), key=lambda d: d.device_id)
-        ]
+        ] + [dict(d) for d in self.gone.values()]
 
     async def dispatch(self, target: str, action: str) -> dict[str, Any]:
         session = self.devices.get(target)
         if not session:
-            return {"ok": False, "error": f"device '{target}' is not connected"}
+            lost = self.gone.get(target)
+            return {"ok": False, "error": f"device '{target}' is not connected",
+                    "reason": "disconnected" if lost else "never_connected",
+                    **({"lost_at": lost["lost_at"]} if lost else {})}
         action_id = uuid.uuid4().hex
         future = asyncio.get_running_loop().create_future()
         self.pending[action_id] = future
@@ -136,7 +144,7 @@ class JarvisServer:
             return await asyncio.wait_for(future, timeout=5)
         except (asyncio.TimeoutError, ConnectionError):
             self.pending.pop(action_id, None)
-            return {"ok": False, "error": "device did not respond"}
+            return {"ok": False, "error": "device did not respond", "reason": "no_response"}
 
 
 async def serve(host: str, port: int, token: str = "") -> None:

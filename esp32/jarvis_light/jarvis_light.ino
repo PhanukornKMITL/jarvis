@@ -6,6 +6,7 @@
 // Set LED_PIN to 2 to use the blue LED on the DevKit itself instead.
 
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include "secrets.h"
 
 const int LED_PIN = 23;
@@ -43,10 +44,21 @@ void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) Serial.printf("Wi-Fi: %s\n", WiFi.localIP().toString().c_str());
 }
 
+// JARVIS_HOST is the Mac's mDNS name ("name" for name.local), so a new IP from the router
+// doesn't matter (it moved from .107 to .14 within a day). A plain IP still works.
+IPAddress jarvisAddress() {
+  IPAddress ip;
+  if (ip.fromString(JARVIS_HOST)) return ip;
+  static bool mdnsStarted = false;
+  if (!mdnsStarted) mdnsStarted = MDNS.begin(DEVICE_ID);
+  return MDNS.queryHost(JARVIS_HOST, 2000);
+}
+
 void connectJarvis() {
   if (jarvis.connected()) return;
-  Serial.printf("JARVIS: connecting to %s:%u\n", JARVIS_HOST, JARVIS_PORT);
-  if (!jarvis.connect(JARVIS_HOST, JARVIS_PORT)) {
+  IPAddress ip = jarvisAddress();
+  Serial.printf("JARVIS: connecting to %s (%s):%u\n", JARVIS_HOST, ip.toString().c_str(), JARVIS_PORT);
+  if (ip == IPAddress() || !jarvis.connect(ip, JARVIS_PORT)) {
     Serial.println("JARVIS: not reachable, retrying");
     return;
   }

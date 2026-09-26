@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from .base import Context, Skill
 
@@ -21,8 +22,30 @@ _OFF = re.compile(rf"(?<!เ)(?:ปิ|ปี|บิ|พิ|ภิ)[ดตทก
 _LIGHT_WORD = re.compile(r"ไฟ|ฟาย|ฟัย")
 
 
+def explain(result: dict) -> str:
+    """Why a switch failed, in words: "สั่งไฟไม่สำเร็จ" alone left the owner guessing, and a
+    follow-up "ทำไม" got "ผมควบคุมอุปกรณ์ไม่ได้"."""
+    reason = result.get("reason")
+    if reason == "disconnected":
+        return (f"ไม่เห็นไฟโต๊ะเชื่อมต่ออยู่ค่ะ หลุดไปตั้งแต่ {result.get('lost_at')} "
+                "ESP32 อาจไม่มีไฟเลี้ยง หลุด Wi-Fi หรือหาเครื่อง Mac ไม่เจอค่ะ")
+    if reason == "never_connected":
+        return "ไฟโต๊ะยังไม่ได้เชื่อมต่อกับผมเลยตั้งแต่เปิดระบบค่ะ ลองเช็คว่า ESP32 เสียบไฟและต่อ Wi-Fi อยู่ไหมคะ"
+    if reason == "no_response":
+        return "ไฟโต๊ะเชื่อมต่ออยู่แต่ไม่ตอบคำสั่งค่ะ ลองกดปุ่ม EN รีสตาร์ท ESP32 ดูนะคะ"
+    return f"สั่งไฟไม่สำเร็จค่ะ ({result.get('error', 'ไม่ทราบสาเหตุ')})"
+
+
 def _switch(ctx: Context, action: str, done: str) -> str:
-    return done if ctx.action(TARGET, action).get("ok") else "สั่งไฟไม่สำเร็จค่ะ"
+    try:
+        result = ctx.action(TARGET, action)
+    except (OSError, ConnectionError):
+        result = {"ok": False, "error": "ติดต่อเซิร์ฟเวอร์อุปกรณ์ไม่ได้ เซิร์ฟเวอร์อาจไม่ได้เปิดอยู่"}
+    if result.get("ok"):
+        return done
+    why = explain(result)
+    ctx.facts["device_problem"] = (time.time(), f"ปัญหาล่าสุดตอนสั่งไฟ: {why}")  # for a follow-up "ทำไม"
+    return why
 
 
 def mentions_light(text: str) -> bool:

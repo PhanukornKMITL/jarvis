@@ -64,6 +64,11 @@ NAMED_WARM = 2 + len(ON_REPLIES) + len(OFF_REPLIES)
 # so a question like "พอจะมีร้านแนะนำไหม" is not taken as "พอ".
 _STOP_WORDS = re.compile(r"(?:หยุด|พอแลว|พอ|เงียบ|ไมตองแลว|ไมตอง|ชางมัน|ยกเลิก|stop)(?:กอน|นะ|ครับ|คะ|เลย|ที|แลว|เถอะ|เถอ)*")
 
+# Said during follow-up listening: end the conversation instead of answering. Matched against
+# normalize()d text (no tone marks). "ไม่ได้คุยกับคุณ" ends it silently.
+_NOT_TO_ME = re.compile(r"ไม(?:ได)?(?:คุย|พูด)กับ(?:คุณ|จาวิส|จารวิส|นาย)")
+_DISMISS = re.compile(r"หยุดพูด|หยุดฟัง|เงียบ|พอแลว|ไปไดแลว|จบแคนี|" + _NOT_TO_ME.pattern)
+
 # Short polls while waiting for the wake word so "Jarvis" is noticed quickly.
 WAKE_STEP_SECONDS = 2
 DEAD_MIC_SECONDS = 30
@@ -676,6 +681,13 @@ class VoiceSession:
             if is_echo(next_heard.command, last_said) and not self._clearly_owner():
                 # JARVIS heard itself ("ต้นไม้ความชืด" right after its garden reply): answering it loops.
                 log_voice(f"ได้ยินเสียงตัวเอง ไม่ตอบ: {next_heard.command}")
+                return
+            if _DISMISS.search(normalize(next_heard.command)):
+                # Talking to someone else (or to oneself) after a reply was taken as a question.
+                log_voice(f"สั่งให้หยุดฟัง: {next_heard.command}")
+                if not _NOT_TO_ME.search(normalize(next_heard.command)):
+                    self.say(STOPPED_REPLY)
+                self.ctx.mode.pop("work_until", None)
                 return
             pending.append(next_heard)
             follow_ups += 1
