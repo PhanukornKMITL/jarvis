@@ -34,6 +34,18 @@ class Microphone:
         if self.windows and not device.startswith("audio="):
             device = f"audio={device}"
         self.device = device
+        self.ffmpeg = ffmpeg
+        self._open()
+
+    def reopen(self) -> None:
+        """Starts ffmpeg again: after a Bluetooth headset drops and reconnects, the old stream
+        keeps delivering exact silence (rms 0 for an hour on 2026-09-26) instead of failing."""
+        self.process.kill()
+        self.process.wait()
+        self._open()
+
+    def _open(self) -> None:
+        ffmpeg, device = self.ffmpeg, self.device
         self.process = subprocess.Popen(
             [
                 ffmpeg, "-hide_banner", "-loglevel", "error",

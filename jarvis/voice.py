@@ -66,6 +66,8 @@ _STOP_WORDS = re.compile(r"(?:หยุด|พอแลว|พอ|เงีย�
 
 # Short polls while waiting for the wake word so "Jarvis" is noticed quickly.
 WAKE_STEP_SECONDS = 2
+DEAD_MIC_SECONDS = 30
+"""All-zero audio this long means a stale device stream, not a quiet room (rms ≥ 3)."""
 OVERLAP_BYTES = 1 * BYTES_PER_SECOND
 LISTEN_TIMEOUT_SECONDS = 6
 # People pause after the name ("จาร์วิส … ปิดไฟ"); real recordings showed up to 1.25s.
@@ -462,7 +464,7 @@ class VoiceSession:
 
     def run(self) -> None:
         overlap = b""
-        idle_ticks = 0
+        idle_ticks = silent_ticks = 0
         while True:
             window = overlap + self.mic.read(WAKE_STEP_SECONDS * BYTES_PER_SECOND)
             overlap = window[-OVERLAP_BYTES:]
@@ -470,6 +472,12 @@ class VoiceSession:
                 overlap = b""
                 continue
             rms = rms_level(window)
+            silent_ticks = silent_ticks + 1 if not any(window) else 0
+            if silent_ticks * WAKE_STEP_SECONDS >= DEAD_MIC_SECONDS:
+                log_voice("ไมค์เงียบสนิท (หูฟังอาจหลุดแล้วต่อใหม่) เปิดไมค์ใหม่")
+                self.mic.reopen()
+                silent_ticks, overlap = 0, b""
+                continue
             if rms < SPEECH_RMS:
                 idle_ticks += 1
                 if idle_ticks % 5 == 0:
