@@ -70,9 +70,20 @@ void handle(const String &line) {
            ",\"state\":" + stateJson() + "}");
 }
 
+// Three blinks at power-on show the LED is wired right before JARVIS takes over.
+void blinkHello() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(200);
+    digitalWrite(LED_PIN, LOW);
+    delay(200);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
+  blinkHello();
   digitalWrite(LED_PIN, LOW);
 }
 
