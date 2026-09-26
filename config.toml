@@ -23,7 +23,10 @@ model = ".models/gemma-4-E4B-it-Q4_K_M.gguf"
 args = ["--chat-template-kwargs", '{"enable_thinking":false}']
 
 [run]
-fake_devices = ["light", "garden"] # Remove when using real ESP32 devices.
+fake_devices = ["garden"] # Remove when using real ESP32 devices.
+# "0.0.0.0" lets ESP32s on the home Wi-Fi reach the device server; they must send the
+# [devices] token from secrets.toml. "127.0.0.1" = this Mac only.
+device_host = "0.0.0.0"
 autostart_voice = true
 
 [dashboard]

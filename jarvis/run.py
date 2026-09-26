@@ -105,7 +105,7 @@ class Supervisor:
             "llm": Service("llm", "โมเดลภาษา", ["llama-server", "-m", str(config.llm_model),
                         "--port", str(llm_port), "-c", "4096", "-ngl", "99", *config.llm_args], llm_port,
                         lambda: llm_healthy(llm_port)),
-            "server": Service("server", "เซิร์ฟเวอร์อุปกรณ์", [py, "-m", "jarvis.server"], 8765,
+            "server": Service("server", "เซิร์ฟเวอร์อุปกรณ์", [py, "-m", "jarvis.server", "--host", config.device_host], 8765,
                               lambda: port_open(8765)),
             "fake_light": Service("fake_light", "ไฟจำลอง", [py, "-m", "jarvis.fake_esp"],
                                   ready_check=lambda: device_online("desk_light")),

@@ -32,7 +32,9 @@ class DeviceSession:
 
 
 class JarvisServer:
-    def __init__(self) -> None:
+    def __init__(self, token: str = "") -> None:
+        self.token = token
+        """Required from every connection that is not this Mac, once the server listens on the LAN."""
         self.devices: dict[str, DeviceSession] = {}
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
@@ -44,6 +46,12 @@ class JarvisServer:
                 return
             message = json.loads(raw)
             kind = message.get("type")
+            peer = (writer.get_extra_info("peername") or ("",))[0]
+            if peer not in ("127.0.0.1", "::1") and (not self.token or message.get("token") != self.token):
+                # On the LAN anyone on the Wi-Fi could otherwise switch devices.
+                writer.write(encode({"error": "bad token"}))
+                await writer.drain()
+                return
             if kind == "register":
                 device_id = str(message["device_id"])
                 old = self.devices.get(device_id)
@@ -131,8 +139,8 @@ class JarvisServer:
             return {"ok": False, "error": "device did not respond"}
 
 
-async def serve(host: str, port: int) -> None:
-    core = JarvisServer()
+async def serve(host: str, port: int, token: str = "") -> None:
+    core = JarvisServer(token)
     server = await asyncio.start_server(core.handle, host, port)
     addresses = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
     print(f"JARVIS listening on {addresses}", flush=True)
@@ -145,8 +153,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="bind address (default: localhost only)")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
+    from .config import load_config  # the device token lives in the git-ignored secrets.toml
     try:
-        asyncio.run(serve(args.host, args.port))
+        asyncio.run(serve(args.host, args.port, load_config().device_token))
     except KeyboardInterrupt:
         pass
 

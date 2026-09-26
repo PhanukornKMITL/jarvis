@@ -67,6 +67,10 @@ class Config:
     weather_lon: float = 100.5018
     dataset_dir: Path | None = ROOT / "work" / "dataset"
     quit_apps: tuple[str, ...] = ("ChatGPT", "Codex")
+    device_host: str = "127.0.0.1"
+    """Where the device server listens ([run] device_host); "0.0.0.0" lets ESP32s on the Wi-Fi in."""
+    device_token: str = ""
+    """Devices on the LAN must send this ([devices] token in secrets.toml)."""
     gistda_api_key: str = ""
     """From the git-ignored secrets.toml; without it the flood tool is not offered."""
 
@@ -98,10 +102,12 @@ def load_secrets(path: Path = SECRETS_PATH) -> dict:
 
 def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
                 secrets_path: Path = SECRETS_PATH) -> Config:
-    gistda_key = str(load_secrets(secrets_path).get("gistda", {}).get("api_key", ""))
+    secrets = load_secrets(secrets_path)
+    gistda_key = str(secrets.get("gistda", {}).get("api_key", ""))
+    device_token = str(secrets.get("devices", {}).get("token", ""))
     profile = load_profile(profile_path)
     if not path.is_file():
-        config = Config(profile=profile, gistda_api_key=gistda_key)
+        config = Config(profile=profile, gistda_api_key=gistda_key, device_token=device_token)
         return _at_home(config)
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     stt, llm, tts = data.get("stt", {}), data.get("llm", {}), data.get("tts", {})
@@ -143,6 +149,8 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
         dataset_dir=dataset_dir if dataset.get("enabled", True) else None,
         quit_apps=tuple(optimize.get("quit_apps", default.quit_apps)),
         gistda_api_key=gistda_key,
+        device_token=device_token,
+        device_host=str(run.get("device_host", default.device_host)),
     ))
 
 

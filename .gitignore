@@ -5,3 +5,4 @@ work/
 profile.toml
 .venv-tts/
 secrets.toml
+esp32/*/secrets.h
