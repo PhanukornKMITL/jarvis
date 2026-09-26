@@ -39,6 +39,7 @@ from .skills.chat import stream_from
 from .skills.light import OFF_REPLIES, ON_REPLIES
 from .stt import SAMPLE_RATE, WhisperSTT, clean_transcript
 from . import memory, reminders, tools
+from .skills import daily
 from .skills.remind import describe
 from .tts import Speaker, split_sentences, synthesize_f5
 from .wake import WAKE_PROMPT, WakeDetector, WhisperWake, normalize, split_wake
@@ -99,6 +100,8 @@ ALARM_RINGS = 10
 ALARM_LISTEN_SECONDS = 8
 ALARM_SOUND = "/System/Library/Sounds/Glass.aiff"
 ACK_SOUND = "/System/Library/Sounds/Pop.aiff"
+MORNING_HOURS = (5, 11)
+WORK_LISTEN_SECONDS = 30
 _ALARM_SNOOZE = re.compile(rf"(?:นอน|เลื่อน|ขอ).{{0,8}}?อีก\s*{reminders._NUM}?\s*นาที|ขอนอนต่อ|ขอนอนอีก")
 
 
@@ -171,8 +174,11 @@ def _offer_reply(ctx: Context, text: str) -> str | None:
     kind, payload = ctx.offers.pop()
     short = normalize(text) if len(text) <= 20 else ""
     if short and _NO.search(short):
-        return "ได้ค่ะ ไม่จำค่ะ" if kind == "memory" else "ได้ค่ะ ไม่ตั้งเตือนค่ะ"
+        return {"memory": "ได้ค่ะ ไม่จำค่ะ", "reminder": "ได้ค่ะ ไม่ตั้งเตือนค่ะ"}.get(kind, "ได้ค่ะ")
     if short and _YES.search(short):
+        if kind == "light_off":
+            ctx.action("desk_light", "turn_off")
+            return "ปิดไฟแล้วค่ะ ฝันดีนะคะ"
         if kind == "reminder":
             reminders.add(payload)
             return "ตั้งเตือนไว้แล้วค่ะ"
@@ -642,12 +648,17 @@ class VoiceSession:
                     continue
                 log_voice(f"เปลี่ยนไปตอบคำถามใหม่: {interruption.command}")
                 pending.append(interruption)
-            if follow_ups >= MAX_FOLLOW_UPS:
+            working = self.ctx.mode.get("work_until", 0) > time.monotonic()
+            if follow_ups >= MAX_FOLLOW_UPS and not working:
                 return
-            pcm, got = self.capture(b"", self.config.follow_up_seconds)
+            pcm, got = self.capture(b"", WORK_LISTEN_SECONDS if working else self.config.follow_up_seconds)
+            if not got and working:
+                continue  # work mode: keep listening until it times out or is ended
             if not got:
                 log_voice("จบบทสนทนา กลับไปรอคำว่า Jarvis")
                 return
+            if working:
+                self.ctx.mode["work_until"] = time.monotonic() + daily.WORK_MODE_SECONDS
             if not self.is_owner(pcm, "คำถามต่อ", in_conversation=True):
                 return
             next_heard = self.hear(pcm, need_wake=False)
@@ -668,9 +679,18 @@ class VoiceSession:
         intent, reply, fillers = answer(self.ctx, heard.command, heard.alternatives)
         log_voice(f"intent: {intent} ({time.monotonic() - started:.2f}s)")
         self._spoken = []
+        prefix = None
+        today = datetime.now()
+        if MORNING_HOURS[0] <= today.hour < MORNING_HOURS[1] and self.ctx.mode.get("greeted") != today.toordinal():
+            # The first talk of the morning starts with the day's weather and plans (VISION.md).
+            self.ctx.mode["greeted"] = today.toordinal()
+            try:
+                prefix = self._good_morning()
+            except (OSError, ValueError, KeyError):
+                prefix = "อรุณสวัสดิ์ค่ะ"
         if intent.startswith("light_"):
             subprocess.Popen(["afplay", ACK_SOUND])  # a click as the light switches
-        barge, unspoken = self.say(reply, fillers=fillers)
+        barge, unspoken = self.say(reply, fillers=fillers, prefix=prefix)
         said = " ".join(self._spoken)
         self.dataset.save(heard.pcm, wake=wake_heard, transcript=heard.full, command=heard.command,
                           base=heard.base, intent=intent, reply=said, interrupted=barge is not None,

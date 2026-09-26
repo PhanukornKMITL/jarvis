@@ -21,6 +21,8 @@ class Context:
     "จะไปกินข้าวข้างนอก" later, can still use it."""
     offers: list[tuple[str, object]] = field(default_factory=list)
     """What JARVIS just offered, waiting for a yes or no: ("memory", fact) or ("reminder", Reminder)."""
+    mode: dict[str, float] = field(default_factory=dict)
+    """Session modes, e.g. "work_until" (time.monotonic()) for work mode."""
     fired: list[str] = field(default_factory=list)
     """Id of the reminder that last went off, for "เลื่อนอีก 10 นาที"."""
 

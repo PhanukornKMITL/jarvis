@@ -129,6 +129,9 @@ permission the first time. Press Ctrl+C to stop listening.
 - Alarms: "ปลุกผมตีห้าครึ่ง", "ปลุกทุกวันธรรมดา 7 โมง" ring (sound + voice) until you answer;
   "ขอนอนอีก 10 นาที" snoozes, anything else ends with a good-morning summary of the weather
   and today's reminders. `[voice] keep_awake` stops the Mac sleeping while JARVIS runs.
+- Moments of the day: the first talk of the morning starts with a good-morning summary;
+  "ฝันดี" / "ไปนอนแล้ว" says good night and offers to switch off a light left on; "เริ่มทำงาน"
+  keeps listening without the wake word (owner only) until "เลิกทำงาน" or 10 quiet minutes.
 - `python3 -m jarvis.bench` runs the questions in `bench/cases.toml` through the same path
   as a spoken command and scores them by category (operation: control, status, weather,
   flood, news; daily life: small talk, food, knowledge, self, memory). `--runs 3` repeats

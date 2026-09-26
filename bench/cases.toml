@@ -255,3 +255,19 @@ mention = "ปลุก.*5 นาฬิกา 30 นาที.*ใช่ไห�
 say = "ปลุกทุกวันธรรมดา 7 โมง"
 route = "reminder_set"
 mention = "ปลุก.*วันจันทร์.*7 นาฬิกา.*ทุกวันธรรมดา"
+
+# ---------------------------------------------------------------- daily_life: moments of the day
+[[daily_life.moments]]
+say = "จาวิส เริ่มทำงาน"
+route = "work_on"
+[[daily_life.moments]]
+say = ["เริ่มทำงาน", "เลิกทำงาน"]
+route = "work_off"
+[[daily_life.moments]]
+say = "ฝันดีนะ"
+route = "good_night"
+mention = "ฝันดี"
+[[daily_life.moments]]
+say = ["เปิดไฟให้หน่อย", "ผมไปนอนก่อนนะ", "ได้"]
+route = "offer_reply"
+mention = "ปิดไฟแล้ว"
