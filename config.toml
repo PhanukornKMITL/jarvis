@@ -55,6 +55,9 @@ follow_up_seconds = 5
 # results; no audio) in work/conversation.json so a restart doesn't forget it.
 # false also deletes that file.
 remember_across_restarts = true
+# Keep the Mac from sleeping while JARVIS listens (macOS caffeinate, ends with JARVIS),
+# or alarms and reminders don't go off. The display can still sleep.
+keep_awake = true
 # Only obey the enrolled owner's voice (also stops JARVIS answering its own echo).
 # Enroll with: .venv-tts/bin/python -m jarvis.speaker_id   (runs in the `tts` service)
 speaker_check = true

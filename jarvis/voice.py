@@ -12,10 +12,12 @@ import base64
 import itertools
 import json
 import math
+import os
 import platform
 import random
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -91,6 +93,10 @@ MEMORY_PATH = LOG_PATH.with_name("conversation.json")
 "เมื่อกี้ผมพูดว่าอะไร" had nothing to go on. Expired entries are dropped when saved."""
 FACTS_KEEP_SECONDS = 3600
 REMIND_CHECK_SECONDS = 15
+ALARM_RINGS = 10
+ALARM_LISTEN_SECONDS = 8
+ALARM_SOUND = "/System/Library/Sounds/Glass.aiff"
+_ALARM_SNOOZE = re.compile(rf"(?:นอน|เลื่อน|ขอ).{{0,8}}?อีก\s*{reminders._NUM}?\s*นาที|ขอนอนต่อ|ขอนอนอีก")
 
 
 def log_voice(message: str) -> None:
@@ -481,6 +487,9 @@ class VoiceSession:
         except (OSError, ValueError):
             return False
         for r in due:
+            if r.alarm:
+                self._ring(r)
+                continue
             early = r.when > datetime.now() + timedelta(minutes=1)
             text = (f"เตือนความจำค่ะ อีก {r.lead} นาที มีเรื่อง{r.what}" if early
                     else f"เตือนความจำค่ะ ถึงเวลา{r.what}แล้วค่ะ")
@@ -490,6 +499,48 @@ class VoiceSession:
             self.ctx.history.append(("", self.render(text)))
             self.last_turn_at = time.monotonic()
         return bool(due)
+
+    def _ring(self, alarm: reminders.Reminder) -> None:
+        """An alarm rings and asks until answered: "ขอนอนอีก 10 นาที" snoozes, anything else from
+        the owner ("ตื่นแล้ว", "หยุด") ends it with a good-morning summary."""
+        log_voice(f"ปลุก ({alarm.at})")
+        self.ctx.fired[:] = [alarm.id]
+        for _ in range(ALARM_RINGS):
+            subprocess.run(["afplay", ALARM_SOUND], check=False)
+            now = datetime.now()
+            self.say(f"ตื่นได้แล้วค่ะ ตอนนี้ {now.hour} นาฬิกา{f' {now.minute} นาที' if now.minute else ''}ค่ะ")
+            pcm, got = self.capture(b"", ALARM_LISTEN_SECONDS)
+            if not got or not self.is_owner(pcm, "ตอบปลุก", in_conversation=True):
+                continue
+            heard = self.hear(pcm, need_wake=False)
+            if heard is None or not heard.command:
+                continue
+            snooze = _ALARM_SNOOZE.search(heard.command)
+            if snooze:
+                minutes = reminders._n(snooze.group(1)) if snooze.group(1) else 10
+                reminders.snooze(alarm.id, minutes)
+                self.say(f"ได้ค่ะ อีก {minutes} นาทีผมปลุกใหม่นะคะ")
+                return
+            self.say(self._good_morning())
+            return
+        log_voice("ปลุกแล้วไม่มีคนตอบ")
+
+    def _good_morning(self) -> str:
+        """Greeting after an alarm: the day's weather and what is set for today."""
+        parts = ["อรุณสวัสดิ์ค่ะ"]
+        facts = tools.BY_NAME["get_weather"].run(self.ctx)
+        summary = facts.get("day_summary", {}) if isinstance(facts, dict) else {}
+        if summary:
+            spans = []
+            for part in ("เช้า", "บ่าย", "เย็นถึงค่ำ"):
+                if part in summary:
+                    chance, _, strength = summary[part].partition(" แรงสุด")
+                    spans.append(f"ช่วง{part}ไม่น่ามีฝน" if chance == "ไม่น่าตก" else f"ช่วง{part}{chance.replace('ตก', 'มี')}{strength}")
+            parts.append(f"วันนี้อากาศ{facts.get('feels', '')} " + " ".join(spans))
+        today = [r for r in reminders.upcoming() if r.when.date() == datetime.now().date() and not r.alarm]
+        if today:
+            parts.append("วันนี้มี " + " ".join(describe(r) for r in today[:3]))
+        return " ".join(parts) + "ค่ะ"
 
     def hear(self, pcm: bytes, need_wake: bool) -> Heard | None:
         """Transcribes an utterance; None if `need_wake` and the name isn't in it after all."""
@@ -645,6 +696,9 @@ def listen(host: str, port: int, audio_device: str, config: Config) -> int:
         print(f"ใช้ไมโครโฟน: {mic.device}; ดูชื่ออุปกรณ์ด้วยคำสั่ง ffmpeg -list_devices true -f dshow -i dummy", flush=True)
     else:
         print("ครั้งแรก macOS อาจขออนุญาตให้ Terminal ใช้ไมโครโฟน", flush=True)
+    if config.keep_awake and shutil.which("caffeinate"):
+        # -i: no idle sleep, -s: none on power either; -w: ends when this process does.
+        subprocess.Popen(["caffeinate", "-is", "-w", str(os.getpid())])
     session = VoiceSession(config, Context(host, port, config), mic, WhisperWake(wake_stt), wake_stt, command_stt)
     threading.Thread(target=session.warm_up, daemon=True).start()
     try:

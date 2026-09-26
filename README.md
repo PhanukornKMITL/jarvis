@@ -126,6 +126,9 @@ permission the first time. Press Ctrl+C to stop listening.
   "มีเตือนอะไรบ้าง", "ยกเลิกเตือนเรื่อง...", "เลื่อนอีก 10 นาที". Thai clock words are parsed by
   code (`jarvis/reminders.py`), not the LLM. A dated plan you mention ("วันเสาร์ผมจะไปเชียงใหม่
   ตอน 7 โมงเช้า") is offered as a reminder. Stored in `work/reminders.json`.
+- Alarms: "ปลุกผมตีห้าครึ่ง", "ปลุกทุกวันธรรมดา 7 โมง" ring (sound + voice) until you answer;
+  "ขอนอนอีก 10 นาที" snoozes, anything else ends with a good-morning summary of the weather
+  and today's reminders. `[voice] keep_awake` stops the Mac sleeping while JARVIS runs.
 - `python3 -m jarvis.bench` runs the questions in `bench/cases.toml` through the same path
   as a spoken command and scores them by category (operation: control, status, weather,
   flood, news; daily life: small talk, food, knowledge, self, memory). `--runs 3` repeats

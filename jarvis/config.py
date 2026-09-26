@@ -58,6 +58,8 @@ class Config:
     speaker_threshold: float = 0.30
     speaker_follow_up_threshold: float = 0.20
     remember_across_restarts: bool = True
+    keep_awake: bool = True
+    """Stop the Mac sleeping while voice runs, so alarms and reminders go off ([voice])."""
     memory_enabled: bool = True
     """Long-term memory in work/memories.json ([memory] enabled)."""
     """Keep the last 30 minutes of conversation in work/conversation.json ([voice])."""
@@ -134,6 +136,7 @@ def load_config(path: Path = CONFIG_PATH, profile_path: Path = PROFILE_PATH,
         speaker_threshold=float(voice.get("speaker_threshold", default.speaker_threshold)),
         speaker_follow_up_threshold=float(voice.get("speaker_follow_up_threshold", default.speaker_follow_up_threshold)),
         remember_across_restarts=bool(voice.get("remember_across_restarts", default.remember_across_restarts)),
+        keep_awake=bool(voice.get("keep_awake", default.keep_awake)),
         memory_enabled=bool(memory.get("enabled", default.memory_enabled)),
         weather_lat=float(weather.get("lat", default.weather_lat)),
         weather_lon=float(weather.get("lon", default.weather_lon)),

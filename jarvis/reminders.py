@@ -122,6 +122,8 @@ def lead_minutes(text: str) -> int:
 
 
 def repeat_of(text: str) -> str:
+    if re.search(r"วันธรรมดา|จันทร์ถึงศุกร์|วันทำงาน", text):
+        return "weekdays"
     if re.search(r"ทุกวัน(?!\S*(?:" + "|".join(DAYS) + "))", text):
         return "daily"
     if re.search(r"ทุกสัปดาห์|ทุกอาทิตย์|ทุกวัน(?:" + "|".join(DAYS) + ")", text):
@@ -154,6 +156,8 @@ class Reminder:
     """"", "daily" or "weekly"."""
     notified: str = ""
     """ISO time it last went off, so a restart doesn't repeat it."""
+    alarm: bool = False
+    """Rings until answered ("ปลุก..."), instead of being said once."""
 
     @property
     def when(self) -> datetime:
@@ -190,8 +194,8 @@ def add(reminder: Reminder) -> None:
     _save([*load(), reminder])
 
 
-def new(what: str, at: datetime, lead: int = 0, repeat: str = "") -> Reminder:
-    return Reminder(uuid.uuid4().hex[:8], what, at.isoformat(timespec="minutes"), lead, repeat)
+def new(what: str, at: datetime, lead: int = 0, repeat: str = "", alarm: bool = False) -> Reminder:
+    return Reminder(uuid.uuid4().hex[:8], what, at.isoformat(timespec="minutes"), lead, repeat, alarm=alarm)
 
 
 def upcoming(now: datetime | None = None) -> list[Reminder]:
@@ -221,9 +225,9 @@ def due(now: datetime | None = None) -> list[Reminder]:
         if r.due_at <= now and not r.notified:
             fired.append(Reminder(**vars(r)))
             if r.repeat:
-                step = timedelta(days=1 if r.repeat == "daily" else 7)
+                step = timedelta(days=7 if r.repeat == "weekly" else 1)
                 at = r.when
-                while at - timedelta(minutes=r.lead) <= now:
+                while at - timedelta(minutes=r.lead) <= now or (r.repeat == "weekdays" and at.weekday() >= 5):
                     at += step
                 r.at = at.isoformat(timespec="minutes")
             else:

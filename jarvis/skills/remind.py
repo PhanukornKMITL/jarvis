@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .. import reminders
 from .base import Context, Skill
@@ -16,8 +16,8 @@ _SNOOZE = re.compile(rf"เลื่อน(?:ไป)?(?:อีก)?\s*{reminders
 
 def describe(r: reminders.Reminder) -> str:
     lead = f" เตือนก่อน {r.lead} นาที" if r.lead else ""
-    repeat = {"daily": " ทุกวัน", "weekly": " ทุกสัปดาห์"}.get(r.repeat, "")
-    return f"{r.what} {reminders.spoken(r.when)}{repeat}{lead}"
+    repeat = {"daily": " ทุกวัน", "weekly": " ทุกสัปดาห์", "weekdays": " ทุกวันธรรมดา"}.get(r.repeat, "")
+    return f"{'ปลุก' if r.alarm else ''}{r.what} {reminders.spoken(r.when)}{repeat}{lead}"
 
 
 def _set(ctx: Context, text: str) -> str:
@@ -26,10 +26,14 @@ def _set(ctx: Context, text: str) -> str:
         return "ต้องการให้เตือนวันไหน กี่โมงคะ"
     if at < datetime.now():
         return f"{reminders.spoken(at)} ผ่านไปแล้วค่ะ ช่วยบอกเวลาใหม่อีกทีนะคะ"
-    what = reminders.what_of(text, ctx.config.llm_endpoint) or "เรื่องที่ขอไว้"
-    reminder = reminders.new(what, at, reminders.lead_minutes(text), reminders.repeat_of(text))
+    alarm = "ปลุก" in text
+    if reminders.repeat_of(text) == "weekdays":
+        while at.weekday() >= 5:  # "ทุกวันธรรมดา" said on a Friday starts on Monday
+            at += timedelta(days=1)
+    what = "" if alarm else reminders.what_of(text, ctx.config.llm_endpoint) or "เรื่องที่ขอไว้"
+    reminder = reminders.new(what, at, reminders.lead_minutes(text), reminders.repeat_of(text), alarm)
     ctx.offers[:] = [("reminder", reminder)]
-    return f"ตั้งเตือน{describe(reminder)} ใช่ไหมคะ"
+    return f"{'ตั้ง' if alarm else 'ตั้งเตือน'}{describe(reminder)} ใช่ไหมคะ"
 
 
 def _list(_ctx: Context, _text: str) -> str:

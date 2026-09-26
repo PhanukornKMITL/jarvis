@@ -241,9 +241,17 @@ say = ["อีก 10 นาทีเตือนให้ปิดเตา", "�
 route = "reminder_cancel"
 mention = "ยกเลิก"
 [[operation.reminders]]
-say = "วันเสาร์ผมจะไปเชียงใหม่ตอน 7 โมงเช้า"
+say = "มะรืนนี้ผมจะไปเชียงใหม่ตอน 7 โมงเช้า"  # not a weekday: the test must not depend on the day it runs
 route = "offer"
 mention = "ตั้งเตือน.*7 นาฬิกา"
 [[operation.reminders]]
 say = "ปภ.เตือนน้ำท่วมที่ไหนบ้าง"
 avoid = "ตั้งเตือน"
+[[operation.reminders]]
+say = "ปลุกผมตีห้าครึ่ง"
+route = "reminder_set"
+mention = "ปลุก.*5 นาฬิกา 30 นาที.*ใช่ไหม"
+[[operation.reminders]]
+say = "ปลุกทุกวันธรรมดา 7 โมง"
+route = "reminder_set"
+mention = "ปลุก.*วันจันทร์.*7 นาฬิกา.*ทุกวันธรรมดา"
